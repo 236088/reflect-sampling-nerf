@@ -1,5 +1,5 @@
 """
-Template DataManager
+ReflectSamplingNeRF DataManager
 """
 
 from dataclasses import dataclass, field
@@ -15,27 +15,27 @@ from nerfstudio.data.datamanagers.base_datamanager import (
 
 
 @dataclass
-class TemplateDataManagerConfig(VanillaDataManagerConfig):
-    """Template DataManager Config
+class ReflectSamplingNeRFDataManagerConfig(VanillaDataManagerConfig):
+    """ReflectSamplingNeRF DataManager Config
 
     Add your custom datamanager config parameters here.
     """
 
-    _target: Type = field(default_factory=lambda: TemplateDataManager)
+    _target: Type = field(default_factory=lambda: ReflectSamplingNeRFDataManager)
 
 
-class TemplateDataManager(VanillaDataManager):
-    """Template DataManager
+class ReflectSamplingNeRFDataManager(VanillaDataManager):
+    """ReflectSamplingNeRF DataManager
 
     Args:
         config: the DataManagerConfig used to instantiate class
     """
 
-    config: TemplateDataManagerConfig
+    config: ReflectSamplingNeRFDataManagerConfig
 
     def __init__(
         self,
-        config: TemplateDataManagerConfig,
+        config: ReflectSamplingNeRFDataManagerConfig,
         device: Union[torch.device, str] = "cpu",
         test_mode: Literal["test", "val", "inference"] = "val",
         world_size: int = 1,

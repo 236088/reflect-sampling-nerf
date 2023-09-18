@@ -10,8 +10,8 @@ import torch.distributed as dist
 from torch.cuda.amp.grad_scaler import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
 
-from method_template.template_datamanager import TemplateDataManagerConfig
-from method_template.template_model import TemplateModel, TemplateModelConfig
+from reflect_sampling_nerf.reflect_sampling_nerf_datamanager import ReflectSamplingNeRFDataManagerConfig
+from reflect_sampling_nerf.reflect_sampling_nerf_model import ReflectSamplingNeRFModel, ReflectSamplingNeRFModelConfig
 from nerfstudio.data.datamanagers.base_datamanager import (
     DataManager,
     DataManagerConfig,
@@ -24,19 +24,19 @@ from nerfstudio.pipelines.base_pipeline import (
 
 
 @dataclass
-class TemplatePipelineConfig(VanillaPipelineConfig):
+class ReflectSamplingNeRFPipelineConfig(VanillaPipelineConfig):
     """Configuration for pipeline instantiation"""
 
-    _target: Type = field(default_factory=lambda: TemplatePipeline)
+    _target: Type = field(default_factory=lambda: ReflectSamplingNeRFPipeline)
     """target class to instantiate"""
-    datamanager: DataManagerConfig = TemplateDataManagerConfig()
+    datamanager: DataManagerConfig = ReflectSamplingNeRFDataManagerConfig()
     """specifies the datamanager config"""
-    model: ModelConfig = TemplateModelConfig()
+    model: ModelConfig = ReflectSamplingNeRFModelConfig()
     """specifies the model config"""
 
 
-class TemplatePipeline(VanillaPipeline):
-    """Template Pipeline
+class ReflectSamplingNeRFPipeline(VanillaPipeline):
+    """ReflectSamplingNeRF Pipeline
 
     Args:
         config: the pipeline config used to instantiate class
@@ -44,7 +44,7 @@ class TemplatePipeline(VanillaPipeline):
 
     def __init__(
         self,
-        config: TemplatePipelineConfig,
+        config: ReflectSamplingNeRFPipelineConfig,
         device: str,
         test_mode: Literal["test", "val", "inference"] = "val",
         world_size: int = 1,
@@ -72,6 +72,6 @@ class TemplatePipeline(VanillaPipeline):
         self.world_size = world_size
         if world_size > 1:
             self._model = typing.cast(
-                TemplateModel, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True)
+                ReflectSamplingNeRFModel, DDP(self._model, device_ids=[local_rank], find_unused_parameters=True)
             )
             dist.barrier(device_ids=[local_rank])

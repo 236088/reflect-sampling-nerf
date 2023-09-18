@@ -1,20 +1,21 @@
 """
-Nerfstudio Template Config
+Nerfstudio ReflectSamplingNeRF Config
 
 Define your custom method here that registers with Nerfstudio CLI.
 """
 
 from __future__ import annotations
 
-from method_template.template_datamanager import (
-    TemplateDataManagerConfig,
+from reflect_sampling_nerf.reflect_sampling_nerf_datamanager import (
+    ReflectSamplingNeRFDataManagerConfig,
 )
-from method_template.template_model import TemplateModelConfig
-from method_template.template_pipeline import (
-    TemplatePipelineConfig,
+from reflect_sampling_nerf.reflect_sampling_nerf_model import ReflectSamplingNeRFModelConfig
+from reflect_sampling_nerf.reflect_sampling_nerf_pipeline import (
+    ReflectSamplingNeRFPipelineConfig,
 )
 from nerfstudio.configs.base_config import ViewerConfig
 from nerfstudio.data.dataparsers.nerfstudio_dataparser import NerfstudioDataParserConfig
+from nerfstudio.data.dataparsers.blender_dataparser import BlenderDataParserConfig
 from nerfstudio.engine.optimizers import AdamOptimizerConfig, RAdamOptimizerConfig
 from nerfstudio.engine.schedulers import (
     ExponentialDecaySchedulerConfig,
@@ -23,20 +24,20 @@ from nerfstudio.engine.trainer import TrainerConfig
 from nerfstudio.plugins.types import MethodSpecification
 
 
-method_template = MethodSpecification(
+reflect_sampling_nerf = MethodSpecification(
     config=TrainerConfig(
-        method_name="method-template",  # TODO: rename to your own model
-        steps_per_eval_batch=500,
-        steps_per_save=2000,
-        max_num_iterations=30000,
+        method_name="reflect-sampling-nerf",  # TODO: rename to your own model
+        steps_per_eval_batch=100,
+        steps_per_save=1000,
+        max_num_iterations=100000,
         mixed_precision=True,
-        pipeline=TemplatePipelineConfig(
-            datamanager=TemplateDataManagerConfig(
-                dataparser=NerfstudioDataParserConfig(),
-                train_num_rays_per_batch=4096,
-                eval_num_rays_per_batch=4096,
+        pipeline=ReflectSamplingNeRFPipelineConfig(
+            datamanager=ReflectSamplingNeRFDataManagerConfig(
+                dataparser=BlenderDataParserConfig(),
+                train_num_rays_per_batch=1024,
+                eval_num_rays_per_batch=1024,
             ),
-            model=TemplateModelConfig(
+            model=ReflectSamplingNeRFModelConfig(
                 eval_num_rays_per_chunk=1 << 15,
             ),
         ),
@@ -58,5 +59,5 @@ method_template = MethodSpecification(
         viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
         vis="viewer",
     ),
-    description="Nerfstudio method template.",
+    description="Nerfstudio reflect-sampling-nerf.",
 )
