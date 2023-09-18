@@ -45,7 +45,14 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
     num_importance_samples: int = 128
     """Number of samples in fine field evaluation"""
     
-    loss_coefficients: Dict[str, float] = to_immutable_dict({"rgb_loss_coarse": 1.0, "rgb_loss_fine": 1.0, "n_loss_coarse":1e-3, "n_loss_fine":1e-3, "n_reg_loss_coarse":1e-3, "n_reg_loss_fine":1e-3})
+    loss_coefficients: Dict[str, float] = to_immutable_dict({
+        "rgb_loss_coarse": 1.0,
+        "rgb_loss_fine": 1.0,
+        "n_loss_coarse":1e-3,
+        "n_loss_fine":1e-3,
+        "n_reg_loss_coarse":1e-3,
+        "n_reg_loss_fine":1e-3
+        })
 
     enable_temporal_distortion: bool = False
     """Specifies whether or not to include ray warping based on time."""
@@ -152,12 +159,12 @@ class ReflectSamplingNeRFModel(Model):
             "accumulation_fine": accumulation_fine,
             "depth_coarse": depth_coarse,
             "depth_fine": depth_fine,
-            "weights_coarse": weights_coarse,
-            "weights_fine": weights_fine,
+            "weights_coarse": weights_coarse.detach(),
+            "weights_fine": weights_fine.detach(),
             "pred_normals_coarse":pred_normals_coarse,
             "pred_normals_fine":pred_normals_fine,
-            "normals_coarse": normals_coarse,
-            "normals_fine": normals_fine,
+            "normals_coarse": normals_coarse.detach(),
+            "normals_fine": normals_fine.detach(),
             "direction_coarse": ray_samples_uniform.frustums.directions,
             "direction_fine": ray_samples_pdf.frustums.directions,
         }

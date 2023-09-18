@@ -125,13 +125,13 @@ class ReflectSamplingNeRFNerfField(Field):
         dot_product = torch.sum(ray_samples.frustums.directions*normal, dim=-1, keepdim=True)
         reflection = ray_samples.frustums.directions - 2*normal*dot_product
         
-        attenuation = torch.tensor([1,3,3,3,6,6,6,6,6,10,10,10,10,10,10,10], dtype=torch.float32, device=embedding.device)
+        attenuation = torch.tensor([1, 3,3,3, 6,6,6,6,6, 10,10,10,10,10,10,10], dtype=torch.float32, device=embedding.device)
         attenuation = torch.exp(-roughness*attenuation.unsqueeze(0).unsqueeze(0))
         encoded_dir = self.direction_encoding(reflection)*attenuation
 
         mlp_out = self.mlp_head(torch.cat([bottle_neck, encoded_dir, dot_product], dim=-1))  # type: ignore
         outputs = self.field_output_rgb(mlp_out)
-        outputs = torch.clamp(diffuse + tint*outputs,0,1)
+        outputs = diffuse + tint*outputs
 
         return outputs
  
