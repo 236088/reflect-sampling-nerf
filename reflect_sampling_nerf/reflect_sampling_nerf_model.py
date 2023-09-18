@@ -45,7 +45,14 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
     num_importance_samples: int = 128
     """Number of samples in fine field evaluation"""
     
-    loss_coefficients: Dict[str, float] = to_immutable_dict({"rgb_loss": 1.0, "n_loss":1e-3, "n_reg_loss":1e-3})
+    loss_coefficients: Dict[str, float] = to_immutable_dict({
+        "rgb_loss_coarse": 1.0,
+        "rgb_loss_fine": 1.0,
+        "n_loss_coarse":1e-4,
+        "n_loss_fine":1e-4,
+        "n_reg_loss_coarse":1e-4,
+        "n_reg_loss_fine":1e-4,
+        })
 
     enable_temporal_distortion: bool = False
     """Specifies whether or not to include ray warping based on time."""
@@ -90,7 +97,7 @@ class ReflectSamplingNeRFModel(Model):
         self.sampler_pdf = PDFSampler(num_samples=self.config.num_importance_samples, include_original=False)
 
         # renderers
-        self.renderer_rgb = RGBRenderer(background_color=colors.BLACK)
+        self.renderer_rgb = RGBRenderer(background_color=colors.WHITE)
         self.renderer_accumulation = AccumulationRenderer()
         self.renderer_depth = DepthRenderer()
 
@@ -113,27 +120,44 @@ class ReflectSamplingNeRFModel(Model):
         if self.field is None:
             raise ValueError("populate_fields() must be called before get_outputs")
 
+
         # uniform sampling
         ray_samples_uniform = self.sampler_uniform(ray_bundle)
 
         # First pass:
-        density_outputs_coarse, embedding = self.field.get_density(ray_samples_uniform)
+        density_outputs_coarse, embedding_coarse = self.field.get_density(ray_samples_uniform, True)
         weights_coarse = ray_samples_uniform.get_weights(density_outputs_coarse)
-        rgb_outputs_coarse = self.field.get_outputs(ray_samples_uniform, embedding)
-        rgb_coarse = self.renderer_rgb(rgb=rgb_outputs_coarse, weights=weights_coarse)
         accumulation_coarse = self.renderer_accumulation(weights_coarse)
         depth_coarse = self.renderer_depth(weights_coarse, ray_samples_uniform)
+
+        embedding_coarse = self.field.get_mid(embedding_coarse)
+        pred_normals_coarse = self.field.get_pred_normals(embedding_coarse)
+        if self.training:
+            normals_coarse = self.field.get_normals()
+        else:
+            normals_coarse = pred_normals_coarse
+
+        rgb_outputs_coarse = self.field.get_outputs(ray_samples_uniform, embedding_coarse)
+        rgb_coarse = self.renderer_rgb(rgb=rgb_outputs_coarse, weights=weights_coarse)
 
         # pdf sampling
         ray_samples_pdf = self.sampler_pdf(ray_bundle, ray_samples_uniform, weights_coarse)
 
         # Second pass:
-        density_outputs_fine, embedding = self.field.get_density(ray_samples_pdf)
+        density_outputs_fine, embedding_fine = self.field.get_density(ray_samples_pdf, True)
         weights_fine = ray_samples_pdf.get_weights(density_outputs_fine)
-        rgb_outputs_fine = self.field.get_outputs(ray_samples_pdf, embedding)
-        rgb_fine = self.renderer_rgb(rgb=rgb_outputs_fine, weights=weights_fine)
         accumulation_fine = self.renderer_accumulation(weights_fine)
         depth_fine = self.renderer_depth(weights_fine, ray_samples_pdf)
+
+        embedding_fine = self.field.get_mid(embedding_fine)
+        pred_normals_fine = self.field.get_pred_normals(embedding_fine)
+        if self.training:
+            normals_fine = self.field.get_normals()
+        else:
+            normals_fine = pred_normals_fine
+
+        rgb_outputs_fine = self.field.get_outputs(ray_samples_pdf, embedding_fine)
+        rgb_fine = self.renderer_rgb(rgb=rgb_outputs_fine, weights=weights_fine)
 
         outputs = {
             "rgb_coarse": rgb_coarse,
@@ -142,6 +166,14 @@ class ReflectSamplingNeRFModel(Model):
             "accumulation_fine": accumulation_fine,
             "depth_coarse": depth_coarse,
             "depth_fine": depth_fine,
+            "weights_coarse": weights_coarse.detach(),
+            "weights_fine": weights_fine.detach(),
+            "pred_normals_coarse":pred_normals_coarse,
+            "pred_normals_fine":pred_normals_fine,
+            "normals_coarse": normals_coarse.detach(),
+            "normals_fine": normals_fine.detach(),
+            "direction_coarse": ray_samples_uniform.frustums.directions,
+            "direction_fine": ray_samples_pdf.frustums.directions,
         }
         return outputs
 
@@ -157,11 +189,26 @@ class ReflectSamplingNeRFModel(Model):
             pred_accumulation=outputs["accumulation_fine"],
             gt_image=image,
         )
+        
         rgb_loss_coarse = self.rgb_loss(image_coarse, pred_coarse)
         rgb_loss_fine = self.rgb_loss(image_fine, pred_fine)
-        print(rgb_loss_coarse.item(), rgb_loss_fine.item())
-        loss_dict = {"rgb_loss_coarse": rgb_loss_coarse, "rgb_loss_fine": rgb_loss_fine}
+        n_loss_coarse = torch.sum(outputs["weights_coarse"]*torch.sum((outputs["normals_coarse"]-outputs["pred_normals_coarse"])**2, dim=-1, keepdim=True))
+        n_loss_fine = torch.sum(outputs["weights_fine"]*torch.sum((outputs["normals_fine"]-outputs["pred_normals_fine"])**2, dim=-1, keepdim=True))
+        dot_nd_coarse = torch.sum(outputs["pred_normals_coarse"]*outputs["pred_normals_coarse"], dim=-1, keepdim=True)
+        n_reg_loss_coarse = torch.sum(outputs["weights_coarse"]*torch.max(torch.zeros_like(dot_nd_coarse),dot_nd_coarse)**2)
+        dot_nd_fine = torch.sum(outputs["pred_normals_fine"]*outputs["pred_normals_fine"], dim=-1, keepdim=True)
+        n_reg_loss_fine = torch.sum(outputs["weights_fine"]*torch.max(torch.zeros_like(dot_nd_fine),dot_nd_fine)**2)
+        print(rgb_loss_fine.item(), n_loss_fine.item(), n_reg_loss_fine.item())
+        loss_dict = {
+            "rgb_loss_coarse": rgb_loss_coarse,
+            "rgb_loss_fine": rgb_loss_fine, 
+            "n_loss_coarse": n_loss_coarse,
+            "n_loss_fine": n_loss_fine,
+            "n_reg_loss_coarse": n_reg_loss_coarse,
+            "n_reg_loss_fine": n_reg_loss_fine,
+            }
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
+        if 
         return loss_dict
 
     def get_image_metrics_and_images(
