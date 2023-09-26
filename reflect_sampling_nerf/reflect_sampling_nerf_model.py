@@ -48,10 +48,10 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
     loss_coefficients: Dict[str, float] = to_immutable_dict({
         "rgb_loss_coarse": 1.0,
         "rgb_loss_fine": 1.0,
-        "n_loss_coarse":1e-4,
-        "n_loss_fine":1e-4,
-        "n_reg_loss_coarse":1e-4,
-        "n_reg_loss_fine":1e-4,
+        "n_loss_coarse": 1.0,
+        "n_loss_fine": 1.0,
+        "n_reg_loss_coarse": 1.0,
+        "n_reg_loss_fine": 1.0,
         })
 
     enable_temporal_distortion: bool = False
@@ -89,7 +89,8 @@ class ReflectSamplingNeRFModel(Model):
         )
 
         self.field = ReflectSamplingNeRFNerfField(
-            position_encoding=position_encoding, direction_encoding=direction_encoding
+            position_encoding=position_encoding, 
+            direction_encoding=direction_encoding,
         )
 
         # samplers
@@ -97,9 +98,12 @@ class ReflectSamplingNeRFModel(Model):
         self.sampler_pdf = PDFSampler(num_samples=self.config.num_importance_samples, include_original=False)
 
         # renderers
-        self.renderer_rgb = RGBRenderer(background_color=colors.WHITE)
+        self.background_color = colors.WHITE
+        self.renderer_rgb = RGBRenderer()
         self.renderer_accumulation = AccumulationRenderer()
         self.renderer_depth = DepthRenderer()
+        self.renderer_normals = NormalsRenderer()
+        self.renderer_roughness = SemanticRenderer()
 
         # losses
         self.rgb_loss = MSELoss()
@@ -130,15 +134,19 @@ class ReflectSamplingNeRFModel(Model):
         accumulation_coarse = self.renderer_accumulation(weights_coarse)
         depth_coarse = self.renderer_depth(weights_coarse, ray_samples_uniform)
 
-        embedding_coarse = self.field.get_mid(embedding_coarse)
-        pred_normals_coarse = self.field.get_pred_normals(embedding_coarse)
+        pred_normals_outputs_coarse = self.field.get_pred_normals(embedding_coarse)
         if self.training:
-            normals_coarse = self.field.get_normals()
+            normals_outputs_coarse = self.field.get_normals()
         else:
-            normals_coarse = pred_normals_coarse
+            normals_outputs_coarse = pred_normals_outputs_coarse
 
-        rgb_outputs_coarse = self.field.get_outputs(ray_samples_uniform, embedding_coarse)
-        rgb_coarse = self.renderer_rgb(rgb=rgb_outputs_coarse, weights=weights_coarse)
+
+        diff_outputs_coarse = self.field.get_diff(embedding_coarse)
+        tint_outputs_coarse = self.field.get_tint(embedding_coarse)
+        low_outputs_coarse = self.field.get_low(ray_samples_uniform, embedding_coarse)
+        
+        rgb_outputs_coarse = diff_outputs_coarse + tint_outputs_coarse * low_outputs_coarse
+        rgb_coarse = self.renderer_rgb(rgb_outputs_coarse, weights_coarse)
 
         # pdf sampling
         ray_samples_pdf = self.sampler_pdf(ray_bundle, ray_samples_uniform, weights_coarse)
@@ -149,15 +157,85 @@ class ReflectSamplingNeRFModel(Model):
         accumulation_fine = self.renderer_accumulation(weights_fine)
         depth_fine = self.renderer_depth(weights_fine, ray_samples_pdf)
 
-        embedding_fine = self.field.get_mid(embedding_fine)
-        pred_normals_fine = self.field.get_pred_normals(embedding_fine)
+        pred_normals_outputs_fine = self.field.get_pred_normals(embedding_fine)
         if self.training:
-            normals_fine = self.field.get_normals()
+            normals_outputs_fine = self.field.get_normals()
         else:
-            normals_fine = pred_normals_fine
+            normals_outputs_fine = pred_normals_outputs_fine
+        pred_normals_fine = self.renderer_normals(pred_normals_outputs_fine, weights_fine)
+        pred_normals_fine.detach_()
 
-        rgb_outputs_fine = self.field.get_outputs(ray_samples_pdf, embedding_fine)
-        rgb_fine = self.renderer_rgb(rgb=rgb_outputs_fine, weights=weights_fine)
+        rougness_outputs_fine = self.field.get_roughness(embedding_fine)
+        rougness_fine = self.renderer_roughness(rougness_outputs_fine, weights_fine)
+        
+
+        diff_outputs_fine = self.field.get_diff(embedding_fine)
+        diff_fine = self.renderer_rgb(diff_outputs_fine, weights_fine)
+        tint_outputs_fine = self.field.get_tint(embedding_fine)
+        tint_fine = self.renderer_rgb(tint_outputs_fine, weights_fine)
+
+        mask = torch.where(accumulation_fine>1e-2, True, False).reshape(-1)
+        if not mask.any():
+            print(mask.any())
+            rgb_coarse = rgb_coarse + (1.0 - accumulation_coarse)*self.background_color.to(accumulation_coarse)
+            rgb_coarse = self.field.get_padding(rgb_coarse)
+            rgb_fine = rgb_coarse
+            outputs = {
+                "rgb_coarse": rgb_coarse,
+                "rgb_fine": rgb_fine,
+                "accumulation_coarse": accumulation_coarse,
+                "accumulation_fine": accumulation_fine,
+                "depth_coarse": depth_coarse,
+                "depth_fine": depth_fine,
+                "weights_coarse": weights_coarse.detach(),
+                "weights_fine": weights_fine.detach(),
+                "pred_normals_coarse":pred_normals_outputs_coarse,
+                "pred_normals_fine":pred_normals_outputs_fine,
+                "normals_coarse": normals_outputs_coarse.detach(),
+                "normals_fine": normals_outputs_fine.detach(),
+                "direction_coarse": ray_samples_uniform.frustums.directions,
+                "direction_fine": ray_samples_pdf.frustums.directions,
+                "diffuse": diff_fine, 
+                "tint": tint_fine,
+                "roughness": rougness_fine,
+            }
+            return outputs
+
+        origins = ray_bundle.origins[mask,:] + depth_fine[mask,:]*ray_bundle.directions[mask,:]
+        dot_nd = torch.sum(pred_normals_fine[mask,:]*ray_bundle.directions[mask,:], dim=-1, keepdim=True)
+        reflections = ray_bundle.directions[mask,:] - 2*dot_nd*pred_normals_fine[mask,:]
+        dot_nd.detach_()
+        reflections.detach_()
+        print(torch.min(accumulation_fine).item(), torch.max(accumulation_fine).item(), reflections.shape)
+
+        '''
+        roughness to pixelarea as spherical gaussian lobe
+        g(|x-mean|, sigma^2) = exp(-|x-mean|^2/(2*sigma^2))
+        sigma^2 = 1/sharpness
+        sharpness = 2/roughness^2/(4*|direction*normal|)
+        sigma^2 = roughness^2*2*|direction*normal|
+
+        '''
+        reflect_ray_bundle = RayBundle(
+            origins=origins,
+            directions=reflections,
+            pixel_area=rougness_fine[mask,:],
+            nears=torch.zeros_like(ray_bundle.nears[mask,:]),
+            fars=torch.ones_like(ray_bundle.fars[mask,:])
+        )
+
+        # low_outputs_fine = self.field.get_low(ray_samples_pdf, embedding_fine)
+        # low_fine = self.renderer_rgb(low_outputs_fine, weights_fine)
+        radius_variance = rougness_fine[mask,:]*2*torch.abs(dot_nd)
+        env_fine = self.field.get_env(reflections, radius_variance[...,None])
+        
+        rgb_fine = diff_fine
+        rgb_fine[mask,:] = rgb_fine[mask,:] + tint_fine[mask,:]*env_fine
+
+        rgb_coarse = rgb_coarse + (1.0 - accumulation_coarse)*self.background_color.to(accumulation_coarse)
+        rgb_coarse = self.field.get_padding(rgb_coarse)
+        rgb_fine = rgb_fine + (1.0 - accumulation_fine)*self.background_color.to(accumulation_fine)
+        rgb_fine = self.field.get_padding(rgb_fine)
 
         outputs = {
             "rgb_coarse": rgb_coarse,
@@ -168,12 +246,15 @@ class ReflectSamplingNeRFModel(Model):
             "depth_fine": depth_fine,
             "weights_coarse": weights_coarse.detach(),
             "weights_fine": weights_fine.detach(),
-            "pred_normals_coarse":pred_normals_coarse,
-            "pred_normals_fine":pred_normals_fine,
-            "normals_coarse": normals_coarse.detach(),
-            "normals_fine": normals_fine.detach(),
+            "pred_normals_coarse":pred_normals_outputs_coarse,
+            "pred_normals_fine":pred_normals_outputs_fine,
+            "normals_coarse": normals_outputs_coarse.detach(),
+            "normals_fine": normals_outputs_fine.detach(),
             "direction_coarse": ray_samples_uniform.frustums.directions,
             "direction_fine": ray_samples_pdf.frustums.directions,
+            "diffuse": diff_fine, 
+            "tint": tint_fine,
+            "roughness": rougness_fine,
         }
         return outputs
 
@@ -194,11 +275,14 @@ class ReflectSamplingNeRFModel(Model):
         rgb_loss_fine = self.rgb_loss(image_fine, pred_fine)
         n_loss_coarse = torch.sum(outputs["weights_coarse"]*torch.sum((outputs["normals_coarse"]-outputs["pred_normals_coarse"])**2, dim=-1, keepdim=True))
         n_loss_fine = torch.sum(outputs["weights_fine"]*torch.sum((outputs["normals_fine"]-outputs["pred_normals_fine"])**2, dim=-1, keepdim=True))
-        dot_nd_coarse = torch.sum(outputs["pred_normals_coarse"]*outputs["pred_normals_coarse"], dim=-1, keepdim=True)
+        dot_nd_coarse = torch.sum(outputs["pred_normals_coarse"]*outputs["direction_coarse"], dim=-1, keepdim=True)
         n_reg_loss_coarse = torch.sum(outputs["weights_coarse"]*torch.max(torch.zeros_like(dot_nd_coarse),dot_nd_coarse)**2)
-        dot_nd_fine = torch.sum(outputs["pred_normals_fine"]*outputs["pred_normals_fine"], dim=-1, keepdim=True)
+        dot_nd_fine = torch.sum(outputs["pred_normals_fine"]*outputs["direction_fine"], dim=-1, keepdim=True)
         n_reg_loss_fine = torch.sum(outputs["weights_fine"]*torch.max(torch.zeros_like(dot_nd_fine),dot_nd_fine)**2)
         print(rgb_loss_fine.item(), n_loss_fine.item(), n_reg_loss_fine.item())
+        if rgb_loss_fine.isnan().any() and n_loss_fine.isnan().any() and n_reg_loss_fine.isnan().any():
+            torch.autograd.anomaly_mode.set_detect_anomaly(True)
+
         loss_dict = {
             "rgb_loss_coarse": rgb_loss_coarse,
             "rgb_loss_fine": rgb_loss_fine, 
@@ -208,7 +292,6 @@ class ReflectSamplingNeRFModel(Model):
             "n_reg_loss_fine": n_reg_loss_fine,
             }
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
-        if 
         return loss_dict
 
     def get_image_metrics_and_images(

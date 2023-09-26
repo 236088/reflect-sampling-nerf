@@ -16,6 +16,7 @@ from nerfstudio.field_components.encodings import Encoding, Identity
 from nerfstudio.field_components.field_heads import (
     DensityFieldHead,
     FieldHead,
+    FieldHeadNames,
     RGBFieldHead,
     PredNormalsFieldHead,
 )
@@ -41,16 +42,24 @@ class ReflectSamplingNeRFNerfField(Field):
         skip_connections: Tuple[int] = (4,),
         normals_mlp_num_layers: int = 2,
         normals_mlp_layer_width: int = 128,
-        rgb_mlp_num_layers: int = 2,
-        rgb_mlp_layer_width: int = 128,
+        roughness_mlp_num_layers: int = 2,
+        roughness_mlp_layer_width: int = 128,
+        diff_mlp_num_layers: int = 2,
+        diff_mlp_layer_width: int = 128,
+        tint_mlp_num_layers: int = 2,
+        tint_mlp_layer_width: int = 128,
+        low_mlp_num_layers: int = 2,
+        low_mlp_layer_width: int = 128,
+        env_mlp_num_layers: int = 4,
+        env_mlp_layer_width: int = 128,
         spatial_distortion: Optional[SpatialDistortion] = None,
-        rgb_padding: float = 0.01,
+        padding: float = 0.01
     ) -> None:
         super().__init__()
         self.position_encoding = position_encoding
         self.direction_encoding = direction_encoding
         self.spatial_distortion = spatial_distortion
-        self.rgb_padding = rgb_padding
+        self.padding = padding
 
         self.mlp_base = MLP(
             in_dim=self.position_encoding.get_out_dim(),
@@ -62,13 +71,6 @@ class ReflectSamplingNeRFNerfField(Field):
         self.field_output_density = DensityFieldHead(in_dim=self.mlp_base.get_out_dim(), activation=None)
         self.softplus = nn.Softplus()
 
-        self.mlp_mid = MLP(
-            in_dim=self.mlp_base.get_out_dim(),
-            num_layers=1,
-            layer_width=self.mlp_base.get_out_dim(),
-            out_activation=None,
-        )
-
         self.mlp_normals = MLP(
             in_dim=self.mlp_base.get_out_dim(),
             num_layers=normals_mlp_num_layers,
@@ -77,13 +79,48 @@ class ReflectSamplingNeRFNerfField(Field):
         )
         self.field_output_normals = PredNormalsFieldHead(in_dim=self.mlp_normals.get_out_dim())
 
-        self.mlp_rgb = MLP(
-            in_dim=self.mlp_base.get_out_dim()+self.direction_encoding.get_out_dim(),
-            num_layers=rgb_mlp_num_layers,
-            layer_width=rgb_mlp_layer_width,
+        self.mlp_roughness = MLP(
+            in_dim=self.mlp_base.get_out_dim(),
+            num_layers=roughness_mlp_num_layers,
+            layer_width=roughness_mlp_layer_width,
             out_activation=nn.ReLU(),
         )
-        self.field_output_rgb = RGBFieldHead(self.mlp_rgb.get_out_dim())
+        self.field_output_roughness = FieldHead(out_dim=1, field_head_name="roughness", in_dim=self.mlp_roughness.get_out_dim(), activation=nn.Sigmoid())
+
+
+        
+        self.mlp_diff = MLP(
+            in_dim=self.mlp_base.get_out_dim(),
+            num_layers=diff_mlp_num_layers,
+            layer_width=diff_mlp_layer_width,
+            out_activation=nn.ReLU(),
+        )
+        
+        self.field_output_diff = RGBFieldHead(self.mlp_diff.get_out_dim())
+
+        self.mlp_tint = MLP(
+            in_dim=self.mlp_base.get_out_dim(),
+            num_layers=tint_mlp_num_layers,
+            layer_width=tint_mlp_layer_width,
+            out_activation=nn.ReLU(),
+        )
+        self.field_output_tint = RGBFieldHead(self.mlp_tint.get_out_dim())
+        
+        self.mlp_low = MLP(
+            in_dim=self.mlp_base.get_out_dim()+self.direction_encoding.get_out_dim(),
+            num_layers=low_mlp_num_layers,
+            layer_width=low_mlp_layer_width,
+            out_activation=nn.ReLU(),
+        )
+        self.field_output_low = RGBFieldHead(self.mlp_low.get_out_dim())
+        
+        self.mlp_env = MLP(
+            in_dim=self.position_encoding.get_out_dim(),
+            num_layers=env_mlp_num_layers,
+            layer_width=env_mlp_layer_width,
+            out_activation=nn.ReLU(),
+        )
+        self.field_output_env = RGBFieldHead(self.mlp_env.get_out_dim())
 
     def get_density(
         self, ray_samples: RaySamples, require_grad:bool = False
@@ -101,32 +138,66 @@ class ReflectSamplingNeRFNerfField(Field):
             self._density_before_activation=density
         density = self.softplus(density)
         return density, mlp_out
-
-    def get_mid(
-        self, embedding:Tensor
-    ) -> Tensor:
-        return self.mlp_mid(embedding)
     
     def get_pred_normals(
         self, embedding:Tensor
     ) -> Tensor:
         mlp_out = self.mlp_normals(embedding)
         normals = self.field_output_normals(mlp_out)
-        normals = nn.functional.normalize(normals)
         return normals
     
     def get_normals(self) -> Tensor:
         return super().get_normals()
 
-    def get_outputs(
-        self, ray_samples: RaySamples, embedding:Tensor
+    def get_roughness(
+        self, embedding:Tensor
     ) -> Tensor:
-        encoded_dir = self.direction_encoding(ray_samples.frustums.directions)
-        mlp_out = self.mlp_rgb(torch.cat([encoded_dir, embedding], dim=-1))  # type: ignore
-        outputs = self.field_output_rgb(mlp_out)
-        outputs = (1 + self.rgb_padding*2)*outputs - self.rgb_padding
+        mlp_out = self.mlp_roughness(embedding)
+        outputs = self.field_output_roughness(mlp_out)
         return outputs
- 
+
+
+
+    def get_diff(
+        self, embedding:Tensor
+    ) -> Tensor:
+        mlp_out = self.mlp_diff(embedding)
+        outputs = self.field_output_diff(mlp_out)
+        return outputs
+
+    def get_tint(
+        self, embedding:Tensor
+    ) -> Tensor:
+        mlp_out = self.mlp_tint(embedding)
+        outputs = self.field_output_tint(mlp_out)
+        return outputs
+    
+    def get_low(
+        self, ray_samples: RaySamples, embedding:Tensor
+    ) ->Tensor:
+        encoded_dir = self.direction_encoding(ray_samples.frustums.directions)
+        mlp_out = self.mlp_low(torch.cat([encoded_dir, embedding], dim=-1))
+        outputs = self.field_output_low(mlp_out)
+        outputs = self.get_padding(outputs)
+        return outputs
+    
+    def get_env(
+        self, directions: Tensor, radius_variance: Tensor
+    ) ->Tensor:
+        eye = torch.eye(directions.shape[-1], device=directions.device)
+        null_outer_product = eye - directions[..., :, None] * directions[..., None, :]
+        radius_cov_diag = radius_variance * null_outer_product[..., :, :]
+
+        encoded_xyz = self.position_encoding(directions, radius_cov_diag)
+        mlp_out = self.mlp_env(encoded_xyz)
+        outputs = self.field_output_env(mlp_out)
+        outputs = self.get_padding(outputs)
+        return outputs
+    
+    def get_padding(self, inputs: Tensor):
+        outputs = (1 + 2*self.padding)*inputs - self.padding
+        outputs = torch.clip(outputs, 0.0, 1.0)
+        return outputs
        
     # TODO: Override any potential methods to implement your own field.
     # or subclass from base Field and define all mandatory methods.
