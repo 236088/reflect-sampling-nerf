@@ -42,18 +42,11 @@ class ReflectSamplingNeRFNerfField(Field):
         skip_connections: Tuple[int] = (4,),
         normals_mlp_num_layers: int = 2,
         normals_mlp_layer_width: int = 128,
-        roughness_mlp_num_layers: int = 2,
-        roughness_mlp_layer_width: int = 128,
-        diff_mlp_num_layers: int = 2,
-        diff_mlp_layer_width: int = 128,
-        tint_mlp_num_layers: int = 2,
-        tint_mlp_layer_width: int = 128,
         low_mlp_num_layers: int = 2,
         low_mlp_layer_width: int = 128,
-        env_mlp_num_layers: int = 4,
-        env_mlp_layer_width: int = 128,
         spatial_distortion: Optional[SpatialDistortion] = None,
-        padding: float = 0.01
+        density_bias: float = -1,
+        padding: float = 0.01,
     ) -> None:
         super().__init__()
         self.position_encoding = position_encoding
@@ -69,42 +62,31 @@ class ReflectSamplingNeRFNerfField(Field):
             out_activation=nn.ReLU(),
         )
         self.field_output_density = DensityFieldHead(in_dim=self.mlp_base.get_out_dim(), activation=None)
+        self.density_bias = density_bias
         self.softplus = nn.Softplus()
 
         self.mlp_normals = MLP(
-            in_dim=self.mlp_base.get_out_dim(),
+            in_dim=self.mlp_base.get_out_dim(), 
             num_layers=normals_mlp_num_layers,
             layer_width=normals_mlp_layer_width,
             out_activation=nn.ReLU(),
-        )
+        )  
         self.field_output_normals = PredNormalsFieldHead(in_dim=self.mlp_normals.get_out_dim())
 
-        self.mlp_roughness = MLP(
-            in_dim=self.mlp_base.get_out_dim(),
-            num_layers=roughness_mlp_num_layers,
-            layer_width=roughness_mlp_layer_width,
-            out_activation=nn.ReLU(),
-        )
-        self.field_output_roughness = FieldHead(out_dim=1, field_head_name="roughness", in_dim=self.mlp_roughness.get_out_dim(), activation=nn.Sigmoid())
+        self.field_output_roughness = FieldHead(out_dim=1, field_head_name="roughness", in_dim=self.mlp_base.get_out_dim(), activation=nn.Sigmoid())
 
 
-        
-        self.mlp_diff = MLP(
+
+        self.mlp_mid = MLP(
             in_dim=self.mlp_base.get_out_dim(),
-            num_layers=diff_mlp_num_layers,
-            layer_width=diff_mlp_layer_width,
-            out_activation=nn.ReLU(),
+            num_layers=1,
+            layer_width=self.mlp_base.get_out_dim(),
+            out_activation=None,
         )
         
-        self.field_output_diff = RGBFieldHead(self.mlp_diff.get_out_dim())
+        self.field_output_diff = RGBFieldHead(self.mlp_base.get_out_dim())
 
-        self.mlp_tint = MLP(
-            in_dim=self.mlp_base.get_out_dim(),
-            num_layers=tint_mlp_num_layers,
-            layer_width=tint_mlp_layer_width,
-            out_activation=nn.ReLU(),
-        )
-        self.field_output_tint = RGBFieldHead(self.mlp_tint.get_out_dim())
+        self.field_output_tint = RGBFieldHead(self.mlp_base.get_out_dim())
         
         self.mlp_low = MLP(
             in_dim=self.mlp_base.get_out_dim()+self.direction_encoding.get_out_dim(),
@@ -114,13 +96,6 @@ class ReflectSamplingNeRFNerfField(Field):
         )
         self.field_output_low = RGBFieldHead(self.mlp_low.get_out_dim())
         
-        self.mlp_env = MLP(
-            in_dim=self.position_encoding.get_out_dim(),
-            num_layers=env_mlp_num_layers,
-            layer_width=env_mlp_layer_width,
-            out_activation=nn.ReLU(),
-        )
-        self.field_output_env = RGBFieldHead(self.mlp_env.get_out_dim())
 
     def get_density(
         self, ray_samples: RaySamples, require_grad:bool = False
@@ -136,14 +111,14 @@ class ReflectSamplingNeRFNerfField(Field):
         density = self.field_output_density(mlp_out)
         if require_grad and self.training:
             self._density_before_activation=density
-        density = self.softplus(density)
+        density = self.softplus(density + self.density_bias)
         return density, mlp_out
     
     def get_pred_normals(
         self, embedding:Tensor
     ) -> Tensor:
         mlp_out = self.mlp_normals(embedding)
-        normals = self.field_output_normals(mlp_out)
+        normals = -self.field_output_normals(mlp_out)
         return normals
     
     def get_normals(self) -> Tensor:
@@ -152,24 +127,26 @@ class ReflectSamplingNeRFNerfField(Field):
     def get_roughness(
         self, embedding:Tensor
     ) -> Tensor:
-        mlp_out = self.mlp_roughness(embedding)
-        outputs = self.field_output_roughness(mlp_out)
+        outputs = self.field_output_roughness(embedding)
         return outputs
 
 
+    def get_mid(
+        self, embedding: Tensor
+    ) -> Tensor:
+        outputs = self.mlp_mid(embedding)
+        return outputs
 
     def get_diff(
         self, embedding:Tensor
     ) -> Tensor:
-        mlp_out = self.mlp_diff(embedding)
-        outputs = self.field_output_diff(mlp_out)
+        outputs = self.field_output_diff(embedding)
         return outputs
 
     def get_tint(
         self, embedding:Tensor
     ) -> Tensor:
-        mlp_out = self.mlp_tint(embedding)
-        outputs = self.field_output_tint(mlp_out)
+        outputs = self.field_output_tint(embedding)
         return outputs
     
     def get_low(
@@ -181,19 +158,12 @@ class ReflectSamplingNeRFNerfField(Field):
         outputs = self.get_padding(outputs)
         return outputs
     
-    def get_env(
-        self, directions: Tensor, radius_variance: Tensor
-    ) ->Tensor:
-        eye = torch.eye(directions.shape[-1], device=directions.device)
-        null_outer_product = eye - directions[..., :, None] * directions[..., None, :]
-        radius_cov_diag = radius_variance * null_outer_product[..., :, :]
 
-        encoded_xyz = self.position_encoding(directions, radius_cov_diag)
-        mlp_out = self.mlp_env(encoded_xyz)
-        outputs = self.field_output_env(mlp_out)
-        outputs = self.get_padding(outputs)
-        return outputs
-    
+    def get_reflect(
+            self, ray_samples: RaySamples, normals: Tensor
+    ) ->Tensor:
+        
+        
     def get_padding(self, inputs: Tensor):
         outputs = (1 + 2*self.padding)*inputs - self.padding
         outputs = torch.clip(outputs, 0.0, 1.0)
