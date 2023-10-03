@@ -49,8 +49,8 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
     loss_coefficients: Dict[str, float] = to_immutable_dict({
         "rgb_loss_coarse": 1.0,
         "rgb_loss_fine": 1.0,
-        "predicted_normal_loss_coarse": 3e-5,
-        "predicted_normal_loss_fine": 3e-4,
+        "predicted_normal_loss_coarse": 1e-5,
+        "predicted_normal_loss_fine": 1e-4,
         "orientation_loss_coarse": 1e-2,
         "orientation_loss_fine": 1e-1,
         })
@@ -83,10 +83,10 @@ class ReflectSamplingNeRFModel(Model):
 
         # setting up fields
         position_encoding = NeRFEncoding(
-            in_dim=3, num_frequencies=16, min_freq_exp=0.0, max_freq_exp=16.0
+            in_dim=3, num_frequencies=16, min_freq_exp=0.0, max_freq_exp=16.0, include_input=True
         )
         direction_encoding = NeRFEncoding(
-            in_dim=3, num_frequencies=4, min_freq_exp=0.0, max_freq_exp=4.0
+            in_dim=3, num_frequencies=4, min_freq_exp=0.0, max_freq_exp=4.0, include_input=True
         )
 
         self.field = ReflectSamplingNeRFNerfField(
@@ -141,13 +141,13 @@ class ReflectSamplingNeRFModel(Model):
         else:
             normals_outputs_coarse = pred_normals_outputs_coarse
 
-        embedding_coarse = self.field.get_mid(embedding_coarse)
-        diff_outputs_coarse = self.field.get_diff(embedding_coarse)
-        tint_outputs_coarse = self.field.get_tint(embedding_coarse)
+        # embedding_coarse = self.field.get_mid(embedding_coarse)
+        # diff_outputs_coarse = self.field.get_diff(embedding_coarse)
+        # tint_outputs_coarse = self.field.get_tint(embedding_coarse)
         low_outputs_coarse = self.field.get_low(ray_samples_uniform, embedding_coarse)
         
-        rgb_outputs_coarse = diff_outputs_coarse + tint_outputs_coarse * low_outputs_coarse
-        rgb_coarse = self.renderer_rgb(rgb_outputs_coarse, weights_coarse)
+        # rgb_outputs_coarse = diff_outputs_coarse + tint_outputs_coarse * low_outputs_coarse
+        rgb_coarse = self.renderer_rgb(low_outputs_coarse, weights_coarse)
 
         # pdf sampling
         ray_samples_pdf = self.sampler_pdf(ray_bundle, ray_samples_uniform, weights_coarse)
@@ -168,7 +168,7 @@ class ReflectSamplingNeRFModel(Model):
         # rougness_outputs_fine = self.field.get_roughness(embedding_fine)
         # rougness_fine = self.renderer_roughness(rougness_outputs_fine, weights_fine)
         
-        embedding_fine = self.field.get_mid(embedding_fine)
+        # embedding_fine = self.field.get_mid(embedding_fine)
         # diff_outputs_fine = self.field.get_diff(embedding_fine)
         # diff_fine = self.renderer_rgb(diff_outputs_fine, weights_fine)
         # tint_outputs_fine = self.field.get_tint(embedding_fine)
@@ -268,15 +268,18 @@ class ReflectSamplingNeRFModel(Model):
         rgb_loss_coarse = self.rgb_loss(image_coarse, pred_coarse)
         rgb_loss_fine = self.rgb_loss(image_fine, pred_fine)
 
-        predicted_normal_loss_coarse = torch.sum(torch.sum((outputs["normals_coarse"]-outputs["pred_normals_coarse"])**2, dim=-1, keepdim=True))
-        predicted_normal_loss_fine = torch.sum(torch.sum((outputs["normals_fine"]-outputs["pred_normals_fine"])**2, dim=-1, keepdim=True))
+        predicted_normal_loss_coarse = torch.sum(outputs["weights_coarse"]*torch.sum((outputs["normals_coarse"]-outputs["pred_normals_coarse"])**2, dim=-1, keepdim=True))
+        predicted_normal_loss_fine = torch.sum(outputs["weights_fine"]*torch.sum((outputs["normals_fine"]-outputs["pred_normals_fine"])**2, dim=-1, keepdim=True))
 
         dot_nd_coarse = torch.sum(outputs["pred_normals_coarse"]*outputs["direction_coarse"], dim=-1, keepdim=True)
-        orientation_loss_coarse = torch.sum(torch.max(torch.zeros_like(dot_nd_coarse),dot_nd_coarse)**2)
+        orientation_loss_coarse = torch.sum(outputs["weights_coarse"]*torch.max(torch.zeros_like(dot_nd_coarse),dot_nd_coarse)**2)
         dot_nd_fine = torch.sum(outputs["pred_normals_fine"]*outputs["direction_fine"], dim=-1, keepdim=True)
-        orientation_loss_fine = torch.sum(torch.max(torch.zeros_like(dot_nd_fine),dot_nd_fine)**2)
+        orientation_loss_fine = torch.sum(outputs["weights_fine"]*torch.max(torch.zeros_like(dot_nd_fine),dot_nd_fine)**2)
         
-        print(rgb_loss_fine.item(), torch.max(torch.sum((outputs["normals_fine"]-outputs["pred_normals_fine"])**2, dim=-1, keepdim=True)), orientation_loss_fine.item())
+        print(rgb_loss_fine.item(),
+              orientation_loss_fine.item(),
+              torch.mean(outputs["weights_fine"]*torch.sum(outputs["normals_fine"]*outputs["pred_normals_fine"], dim=-1, keepdim=True)).item(),
+              orientation_loss_fine.item())
 
         if rgb_loss_fine.isnan().any() and predicted_normal_loss_fine.isnan().any() and orientation_loss_fine.isnan().any():
             torch.autograd.anomaly_mode.set_detect_anomaly(True)

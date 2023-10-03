@@ -45,7 +45,7 @@ class ReflectSamplingNeRFNerfField(Field):
         low_mlp_num_layers: int = 2,
         low_mlp_layer_width: int = 128,
         spatial_distortion: Optional[SpatialDistortion] = None,
-        density_bias: float = -1,
+        density_bias: float = 0.5,
         padding: float = 0.01,
     ) -> None:
         super().__init__()
@@ -65,13 +65,7 @@ class ReflectSamplingNeRFNerfField(Field):
         self.density_bias = density_bias
         self.softplus = nn.Softplus()
 
-        self.mlp_normals = MLP(
-            in_dim=self.mlp_base.get_out_dim(), 
-            num_layers=normals_mlp_num_layers,
-            layer_width=normals_mlp_layer_width,
-            out_activation=nn.ReLU(),
-        )  
-        self.field_output_normals = PredNormalsFieldHead(in_dim=self.mlp_normals.get_out_dim())
+        self.field_output_normals = PredNormalsFieldHead(in_dim=self.mlp_base.get_out_dim())
 
         self.field_output_roughness = FieldHead(out_dim=1, field_head_name="roughness", in_dim=self.mlp_base.get_out_dim(), activation=nn.Sigmoid())
 
@@ -117,8 +111,7 @@ class ReflectSamplingNeRFNerfField(Field):
     def get_pred_normals(
         self, embedding:Tensor
     ) -> Tensor:
-        mlp_out = self.mlp_normals(embedding)
-        normals = -self.field_output_normals(mlp_out)
+        normals = -self.field_output_normals(embedding)
         return normals
     
     def get_normals(self) -> Tensor:
@@ -159,11 +152,8 @@ class ReflectSamplingNeRFNerfField(Field):
         return outputs
     
 
-    def get_reflect(
-            self, ray_samples: RaySamples, normals: Tensor
-    ) ->Tensor:
         
-        
+
     def get_padding(self, inputs: Tensor):
         outputs = (1 + 2*self.padding)*inputs - self.padding
         outputs = torch.clip(outputs, 0.0, 1.0)
