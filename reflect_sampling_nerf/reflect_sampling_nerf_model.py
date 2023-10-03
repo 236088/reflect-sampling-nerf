@@ -49,8 +49,8 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
     loss_coefficients: Dict[str, float] = to_immutable_dict({
         "rgb_loss_coarse": 1.0,
         "rgb_loss_fine": 1.0,
-        "predicted_normal_loss_coarse": 1e-5,
-        "predicted_normal_loss_fine": 1e-4,
+        "predicted_normal_loss_coarse": 3e-5,
+        "predicted_normal_loss_fine": 3e-4,
         "orientation_loss_coarse": 1e-2,
         "orientation_loss_fine": 1e-1,
         })
@@ -158,6 +158,7 @@ class ReflectSamplingNeRFModel(Model):
         accumulation_fine = self.renderer_accumulation(weights_fine)
         depth_fine = self.renderer_depth(weights_fine, ray_samples_pdf)
 
+        n_dot_d_coarse = torch.sum(pred_normals_outputs_coarse*ray_samples_uniform.frustums.directions, dim=-1, keepdim=True)
         pred_normals_outputs_fine = self.field.get_pred_normals(embedding_fine)
         if self.training:
             normals_outputs_fine = self.field.get_normals()
@@ -199,8 +200,8 @@ class ReflectSamplingNeRFModel(Model):
         #     return outputs
 
         # origins = ray_bundle.origins[mask,:] + depth_fine[mask,:]*ray_bundle.directions[mask,:]
-        # dot_nd = torch.sum(pred_normals_fine[mask,:]*ray_bundle.directions[mask,:], dim=-1, keepdim=True)
-        # reflections = ray_bundle.directions[mask,:] - 2*dot_nd*pred_normals_fine[mask,:]
+        # n_dot_d = torch.sum(pred_normals_fine[mask,:]*ray_bundle.directions[mask,:], dim=-1, keepdim=True)
+        # reflections = ray_bundle.directions[mask,:] - 2*n_dot_d*pred_normals_fine[mask,:]
         # print(torch.min(accumulation_fine).item(), torch.max(accumulation_fine).item(), reflections.shape)
 
         # '''
@@ -221,11 +222,12 @@ class ReflectSamplingNeRFModel(Model):
 
         # # low_outputs_fine = self.field.get_low(ray_samples_pdf, embedding_fine)
         # # low_fine = self.renderer_rgb(low_outputs_fine, weights_fine)
-        # radius_variance = rougness_fine[mask,:]*2*torch.abs(dot_nd)
+        # radius_variance = rougness_fine[mask,:]*2*torch.abs(n_dot_d)
         
         # rgb_fine = diff_fine
         # rgb_fine[mask,:] = rgb_fine[mask,:] + tint_fine[mask,:]*env_fine
 
+        n_dot_d_fine = torch.sum(pred_normals_outputs_fine*ray_samples_pdf.frustums.directions, dim=-1, keepdim=True)
         low_outputs_fine = self.field.get_low(ray_samples_pdf, embedding_fine)
         rgb_fine = self.renderer_rgb(low_outputs_fine, weights_fine)
 
@@ -234,6 +236,7 @@ class ReflectSamplingNeRFModel(Model):
         rgb_fine = rgb_fine + (1.0 - accumulation_fine)*self.background_color.to(accumulation_fine)
         rgb_fine = self.field.get_padding(rgb_fine)
 
+        
         outputs = {
             "rgb_coarse": rgb_coarse,
             "rgb_fine": rgb_fine,
@@ -247,8 +250,8 @@ class ReflectSamplingNeRFModel(Model):
             "pred_normals_fine":pred_normals_outputs_fine,
             "normals_coarse": normals_outputs_coarse.detach(),
             "normals_fine": normals_outputs_fine.detach(),
-            "direction_coarse": ray_samples_uniform.frustums.directions,
-            "direction_fine": ray_samples_pdf.frustums.directions,
+            "n_dot_d_coarse": n_dot_d_coarse,
+            "n_dot_d_fine": n_dot_d_fine,
         }
         return outputs
 
@@ -271,14 +274,12 @@ class ReflectSamplingNeRFModel(Model):
         predicted_normal_loss_coarse = torch.sum(outputs["weights_coarse"]*torch.sum((outputs["normals_coarse"]-outputs["pred_normals_coarse"])**2, dim=-1, keepdim=True))
         predicted_normal_loss_fine = torch.sum(outputs["weights_fine"]*torch.sum((outputs["normals_fine"]-outputs["pred_normals_fine"])**2, dim=-1, keepdim=True))
 
-        dot_nd_coarse = torch.sum(outputs["pred_normals_coarse"]*outputs["direction_coarse"], dim=-1, keepdim=True)
-        orientation_loss_coarse = torch.sum(outputs["weights_coarse"]*torch.max(torch.zeros_like(dot_nd_coarse),dot_nd_coarse)**2)
-        dot_nd_fine = torch.sum(outputs["pred_normals_fine"]*outputs["direction_fine"], dim=-1, keepdim=True)
-        orientation_loss_fine = torch.sum(outputs["weights_fine"]*torch.max(torch.zeros_like(dot_nd_fine),dot_nd_fine)**2)
+        orientation_loss_coarse = torch.sum(outputs["weights_coarse"]*torch.max(torch.zeros_like(outputs["n_dot_d_coarse"]),outputs["n_dot_d_coarse"])**2)
+        orientation_loss_fine = torch.sum(outputs["weights_fine"]*torch.max(torch.zeros_like(outputs["n_dot_d_fine"]),outputs["n_dot_d_fine"])**2)
         
         print(rgb_loss_fine.item(),
-              orientation_loss_fine.item(),
-              torch.mean(outputs["weights_fine"]*torch.sum(outputs["normals_fine"]*outputs["pred_normals_fine"], dim=-1, keepdim=True)).item(),
+              predicted_normal_loss_fine.item(),
+              
               orientation_loss_fine.item())
 
         if rgb_loss_fine.isnan().any() and predicted_normal_loss_fine.isnan().any() and orientation_loss_fine.isnan().any():
