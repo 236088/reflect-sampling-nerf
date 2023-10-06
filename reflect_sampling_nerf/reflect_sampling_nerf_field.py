@@ -81,7 +81,7 @@ class ReflectSamplingNeRFNerfField(Field):
         self.field_output_tint = RGBFieldHead(self.mlp_base.get_out_dim())
         
         self.mlp_low = MLP(
-            in_dim=self.direction_encoding.get_out_dim()+1+self.mlp_base.get_out_dim(),
+            in_dim=self.direction_encoding.get_out_dim()+self.mlp_base.get_out_dim(),
             num_layers=low_mlp_num_layers,
             layer_width=low_mlp_layer_width,
             out_activation=nn.ReLU(),
@@ -163,10 +163,10 @@ class ReflectSamplingNeRFNerfField(Field):
         return outputs
     
     def get_low(
-        self, directions:Tensor, n_dot_d: Tensor, embedding:Tensor
+        self, directions:Tensor, embedding:Tensor
     ) ->Tensor:
         encoded_dir = self.direction_encoding(directions)
-        mlp_out = self.mlp_low(torch.cat([encoded_dir, n_dot_d, embedding], dim=-1))
+        mlp_out = self.mlp_low(torch.cat([encoded_dir, embedding], dim=-1))
         outputs = self.field_output_low(mlp_out)
         outputs = self.get_padding(outputs)
         return outputs

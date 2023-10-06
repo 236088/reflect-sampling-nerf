@@ -152,7 +152,7 @@ class ReflectSamplingNeRFModel(Model):
         tint_outputs_coarse = self.field.get_tint(embedding_coarse)
         tint_coarse = self.renderer_factor(tint_outputs_coarse, weights_coarse)
         
-        low_outputs_coarse = self.field.get_low(ray_samples_uniform.frustums.directions, n_dot_d_coarse, embedding_coarse)
+        low_outputs_coarse = self.field.get_low(ray_samples_uniform.frustums.directions, embedding_coarse)
         low_coarse = self.renderer_rgb(low_outputs_coarse, weights_coarse)
         
         rgb_coarse = diff_coarse + tint_coarse * low_coarse
@@ -167,6 +167,7 @@ class ReflectSamplingNeRFModel(Model):
         weights_fine = ray_samples_pdf.get_weights(density_outputs_fine)
         accumulation_fine = self.renderer_accumulation(weights_fine)
         depth_fine = self.renderer_depth(weights_fine, ray_samples_pdf)
+        
         mask = torch.where(accumulation_fine>1e-4, True, False).reshape(-1)
 
         pred_normals_outputs_fine = self.field.get_pred_normals(embedding_fine)
@@ -187,8 +188,6 @@ class ReflectSamplingNeRFModel(Model):
         tint_fine = self.renderer_factor(tint_outputs_fine, weights_fine)
 
         # if not mask.any():
-        #     print(mask.any())
-        #     rgb_coarse = rgb_coarse + (1.0 - accumulation_coarse)*self.background_color.to(accumulation_coarse)
         #     rgb_coarse = self.field.get_padding(rgb_coarse)
         #     rgb_fine = rgb_coarse
         #     outputs = {
@@ -209,10 +208,23 @@ class ReflectSamplingNeRFModel(Model):
         #     }
         #     return outputs
 
-        # origins = ray_bundle.origins[mask,:] + depth_fine[mask,:]*ray_bundle.directions[mask,:]
-        # n_dot_d = torch.sum(pred_normals_fine[mask,:]*ray_bundle.directions[mask,:], dim=-1, keepdim=True)
-        # reflections = ray_bundle.directions[mask,:] - 2*n_dot_d*pred_normals_fine[mask,:]
-        # print(torch.min(accumulation_fine).item(), torch.max(accumulation_fine).item(), reflections.shape)
+        low_outputs_fine = self.field.get_low(ray_samples_pdf.frustums.directions, embedding_fine)
+        low_fine = self.renderer_rgb(low_outputs_fine, weights_fine)
+        # radius_variance = rougness_fine[mask,:]*2*torch.abs(n_dot_d)
+        
+        rgb_fine = diff_fine + tint_fine*low_fine
+        print(rgb_fine[mask, :].shape)
+
+        origins = ray_bundle.origins[mask,:] + depth_fine[mask,:]*ray_bundle.directions[mask,:]
+        n_dot_d = torch.sum(pred_normals_fine[mask,:]*ray_bundle.directions[mask,:], dim=-1, keepdim=True)
+        reflections = ray_bundle.directions[mask,:] - 2*n_dot_d*pred_normals_fine[mask,:]
+        reflections = torch.nn.functional.normalize(reflections)
+        
+        num_samples = self.config.num_coarse_samples - 1
+        samples = torch.linspace(0, num_samples-1, num_samples)/torch.linspace(num_samples, 1, num_samples)
+        samples = samples.to(reflections.device)
+        samples = origins[...,None,:] + reflections[...,None,:]*samples.unsqueeze(0).unsqueeze(-1)
+        print(samples)
 
         '''
         roughness to pixelarea as spherical gaussian lobe
@@ -222,6 +234,7 @@ class ReflectSamplingNeRFModel(Model):
         sigma^2 = roughness^2*2*|direction*normal|
 
         '''
+        
         # reflect_ray_bundle = RayBundle(
         #     origins=origins,
         #     directions=reflections,
@@ -230,16 +243,7 @@ class ReflectSamplingNeRFModel(Model):
         #     fars=torch.ones_like(ray_bundle.fars[mask,:])
         # )
 
-        low_outputs_fine = self.field.get_low(ray_samples_pdf.frustums.directions, n_dot_d_fine, embedding_fine)
-        low_fine = self.renderer_rgb(low_outputs_fine, weights_fine)
-        # radius_variance = rougness_fine[mask,:]*2*torch.abs(n_dot_d)
-        
-        rgb_fine = diff_fine + tint_fine*low_fine
-        print(rgb_fine[mask, :].shape)
-
-        # rgb_coarse = rgb_coarse + (1.0 - accumulation_coarse)*self.background_color.to(accumulation_coarse)
         rgb_coarse = self.field.get_padding(rgb_coarse)
-        # rgb_fine = rgb_fine + (1.0 - accumulation_fine)*self.background_color.to(accumulation_fine)
         rgb_fine = self.field.get_padding(rgb_fine)
 
         
