@@ -38,7 +38,7 @@ reflect_sampling_nerf = MethodSpecification(
                 eval_num_rays_per_batch=1024,
             ),
             model=ReflectSamplingNeRFModelConfig(
-                eval_num_rays_per_chunk=1 << 15,
+                eval_num_rays_per_chunk=1 << 10,
             ),
         ),
         optimizers={
@@ -56,7 +56,7 @@ reflect_sampling_nerf = MethodSpecification(
                 "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=5000),
             },
         },
-        viewer=ViewerConfig(num_rays_per_chunk=1 << 15),
+        viewer=ViewerConfig(num_rays_per_chunk=1 << 10),
         vis="viewer",
     ),
     description="Nerfstudio reflect-sampling-nerf.",

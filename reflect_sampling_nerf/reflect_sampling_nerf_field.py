@@ -40,8 +40,6 @@ class ReflectSamplingNeRFNerfField(Field):
         base_mlp_num_layers: int = 8,
         base_mlp_layer_width: int = 256,
         skip_connections: Tuple[int] = (4,),
-        normals_mlp_num_layers: int = 2,
-        normals_mlp_layer_width: int = 128,
         low_mlp_num_layers: int = 2,
         low_mlp_layer_width: int = 128,
         spatial_distortion: Optional[SpatialDistortion] = None,
@@ -75,7 +73,7 @@ class ReflectSamplingNeRFNerfField(Field):
             in_dim=self.mlp_base.get_out_dim(),
             num_layers=1,
             layer_width=self.mlp_base.get_out_dim(),
-            out_activation=None,
+            out_activation=nn.ReLU(),
         )
         
         self.field_output_diff = RGBFieldHead(self.mlp_base.get_out_dim())
@@ -83,27 +81,49 @@ class ReflectSamplingNeRFNerfField(Field):
         self.field_output_tint = RGBFieldHead(self.mlp_base.get_out_dim())
         
         self.mlp_low = MLP(
-            in_dim=self.mlp_base.get_out_dim()+self.direction_encoding.get_out_dim(),
+            in_dim=self.direction_encoding.get_out_dim()+1+self.mlp_base.get_out_dim(),
             num_layers=low_mlp_num_layers,
             layer_width=low_mlp_layer_width,
             out_activation=nn.ReLU(),
         )
         self.field_output_low = RGBFieldHead(self.mlp_low.get_out_dim())
-        
+    
 
-    def get_density(
-        self, ray_samples: RaySamples, require_grad:bool = False
+    def get_blob(
+        self, ray_samples: RaySamples
     ) -> Tuple[Tensor, Tensor]:
         gaussian_samples = ray_samples.frustums.get_gaussian_blob()
-        if require_grad and self.training:
-            gaussian_samples.mean.requires_grad = True
-            self._sample_locations = gaussian_samples.mean
         if self.spatial_distortion is not None:
             gaussian_samples = self.spatial_distortion(gaussian_samples)
-        encoded_xyz = self.position_encoding(gaussian_samples.mean, covs=gaussian_samples.cov)
+        return gaussian_samples.mean, gaussian_samples.cov
+    
+    def contract(
+        self, mean: Tensor, cov: Tensor, 
+    ) -> Tensor:
+        norm2 = torch.sum(mean**2, dim=-1, keepdim=True)
+        norm = torch.sqrt(norm2)
+        mean_contract = torch.where(norm>1, (2*norm-1)/norm2*mean, mean)
+        
+        norm = norm.unsqueeze(-1)
+        norm2 = norm2.unsqueeze(-1)
+        outer = mean[...,:,None]*(mean[...,None,:]/norm2)
+        eyes = torch.eye(mean.shape[-1], device=mean.device).expand(outer.shape)
+        # jacobian = torch.autograd.functional.jacobian(mean_contract, mean)
+        jacobian = torch.where(norm>1, 2*(1-norm)/norm2*outer + (2*norm-1)/norm2*eyes, eyes)
+        ''' J*cov*J.T :(J.T=J)'''
+        cov_contract = torch.matmul(torch.matmul(jacobian, cov), jacobian)
+        return mean_contract, cov_contract
+        
+    def get_density(
+        self, mean:Tensor, cov:Tensor, requires_density_grad:bool = False
+    ) -> Tuple[Tensor, Tensor]:
+        if requires_density_grad and self.training:
+            mean.requires_grad = True
+            self._sample_locations = mean
+        encoded_xyz = self.position_encoding(mean, covs=cov)
         mlp_out = self.mlp_base(encoded_xyz)
         density = self.field_output_density(mlp_out)
-        if require_grad and self.training:
+        if requires_density_grad and self.training:
             self._density_before_activation=density
         density = self.softplus(density + self.density_bias)
         return density, mlp_out
@@ -143,10 +163,10 @@ class ReflectSamplingNeRFNerfField(Field):
         return outputs
     
     def get_low(
-        self, ray_samples: RaySamples, embedding:Tensor
+        self, directions:Tensor, n_dot_d: Tensor, embedding:Tensor
     ) ->Tensor:
-        encoded_dir = self.direction_encoding(ray_samples.frustums.directions)
-        mlp_out = self.mlp_low(torch.cat([encoded_dir, embedding], dim=-1))
+        encoded_dir = self.direction_encoding(directions)
+        mlp_out = self.mlp_low(torch.cat([encoded_dir, n_dot_d, embedding], dim=-1))
         outputs = self.field_output_low(mlp_out)
         outputs = self.get_padding(outputs)
         return outputs
