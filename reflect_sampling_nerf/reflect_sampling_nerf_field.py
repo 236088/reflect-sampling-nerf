@@ -44,6 +44,8 @@ class ReflectSamplingNeRFNerfField(Field):
         low_mlp_layer_width: int = 128,
         spatial_distortion: Optional[SpatialDistortion] = None,
         density_bias: float = 0.5,
+        density_reflect_bias: float = 0.0,
+        roughness_bias: float = -1.0,
         padding: float = 0.01,
     ) -> None:
         super().__init__()
@@ -61,11 +63,17 @@ class ReflectSamplingNeRFNerfField(Field):
         )
         self.field_output_density = DensityFieldHead(in_dim=self.mlp_base.get_out_dim(), activation=None)
         self.density_bias = density_bias
-        self.softplus = nn.Softplus()
 
+        self.field_output_reflect_density = DensityFieldHead(in_dim=self.mlp_base.get_out_dim(), activation=None)
+        self.density_reflect_bias = density_reflect_bias
+        
         self.field_output_normals = PredNormalsFieldHead(in_dim=self.mlp_base.get_out_dim())
 
-        self.field_output_roughness = FieldHead(out_dim=1, field_head_name="roughness", in_dim=self.mlp_base.get_out_dim(), activation=nn.Sigmoid())
+        self.field_output_roughness = FieldHead(out_dim=1, field_head_name="roughness", in_dim=self.mlp_base.get_out_dim(), activation=None)
+        self.roughness_bias = roughness_bias
+        
+        self.softplus = nn.Softplus()
+        self.sigmoid = nn.Sigmoid()
 
 
 
@@ -87,6 +95,7 @@ class ReflectSamplingNeRFNerfField(Field):
             out_activation=nn.ReLU(),
         )
         self.field_output_low = RGBFieldHead(self.mlp_low.get_out_dim())
+        
     
 
     def get_blob(
@@ -98,21 +107,27 @@ class ReflectSamplingNeRFNerfField(Field):
         return gaussian_samples.mean, gaussian_samples.cov
     
     def contract(
-        self, mean: Tensor, cov: Tensor, 
+        self, mean: Tensor, cov: Tensor, mask_return:bool = False
     ) -> Tensor:
         norm2 = torch.sum(mean**2, dim=-1, keepdim=True)
         norm = torch.sqrt(norm2)
-        mean_contract = torch.where(norm>1, (2*norm-1)/norm2*mean, mean)
+        mask = norm>1
+        mean_contract = torch.where(mask, (2*norm-1)/norm2*mean, mean)
         
         norm = norm.unsqueeze(-1)
         norm2 = norm2.unsqueeze(-1)
-        outer = mean[...,:,None]*(mean[...,None,:]/norm2)
+        outer = mean[...,:,None]*mean[...,None,:]/norm2
         eyes = torch.eye(mean.shape[-1], device=mean.device).expand(outer.shape)
         # jacobian = torch.autograd.functional.jacobian(mean_contract, mean)
-        jacobian = torch.where(norm>1, 2*(1-norm)/norm2*outer + (2*norm-1)/norm2*eyes, eyes)
+        jacobian = torch.where(mask[...,None], ((2*norm-2)*(eyes-outer)+eyes)/norm2, eyes)
         ''' J*cov*J.T :(J.T=J)'''
         cov_contract = torch.matmul(torch.matmul(jacobian, cov), jacobian)
-        return mean_contract, cov_contract
+        for i in range(cov_contract.shape[-1]):
+            cov_contract[...,i,i]=torch.nn.functional.relu(cov_contract[...,i,i])
+        if mask_return:
+            return mean_contract, cov_contract, mask
+        else:
+            return mean_contract, cov_contract
         
     def get_density(
         self, mean:Tensor, cov:Tensor, requires_density_grad:bool = False
@@ -127,6 +142,15 @@ class ReflectSamplingNeRFNerfField(Field):
             self._density_before_activation=density
         density = self.softplus(density + self.density_bias)
         return density, mlp_out
+        
+    def get_reflect_density(
+        self, mean:Tensor, cov:Tensor
+    ) -> Tuple[Tensor, Tensor]:
+        encoded_xyz = self.position_encoding(mean, covs=cov)
+        mlp_out = self.mlp_base(encoded_xyz)
+        density = self.field_output_reflect_density(mlp_out)
+        density = self.softplus(density + self.density_reflect_bias)
+        return density, mlp_out
     
     def get_pred_normals(
         self, embedding:Tensor
@@ -137,10 +161,13 @@ class ReflectSamplingNeRFNerfField(Field):
     def get_normals(self) -> Tensor:
         return super().get_normals()
 
+
+    '''exp(-softplus(x))=sigmoid(-x)'''
     def get_roughness(
         self, embedding:Tensor
     ) -> Tensor:
-        outputs = self.field_output_roughness(embedding)
+        outputs = -self.field_output_roughness(embedding)
+        outputs = self.sigmoid(outputs + self.roughness_bias)
         return outputs
 
 
