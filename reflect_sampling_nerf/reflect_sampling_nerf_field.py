@@ -76,17 +76,12 @@ class ReflectSamplingNeRFNerfField(Field):
         self.sigmoid = nn.Sigmoid()
 
 
-
-        self.mlp_mid = MLP(
-            in_dim=self.mlp_base.get_out_dim(),
-            num_layers=1,
-            layer_width=self.mlp_base.get_out_dim(),
-            out_activation=nn.ReLU(),
-        )
         
         self.field_output_diff = RGBFieldHead(self.mlp_base.get_out_dim())
 
         self.field_output_tint = RGBFieldHead(self.mlp_base.get_out_dim())
+
+        self.mlp_bottleneck = FieldHead(out_dim=low_mlp_layer_width, field_head_name="bottleneck", in_dim=self.mlp_base.get_out_dim(), activation=None)
         
         self.mlp_low = MLP(
             in_dim=self.direction_encoding.get_out_dim()+self.mlp_base.get_out_dim(),
@@ -170,13 +165,6 @@ class ReflectSamplingNeRFNerfField(Field):
         outputs = self.sigmoid(outputs + self.roughness_bias)
         return outputs
 
-
-    def get_mid(
-        self, embedding: Tensor
-    ) -> Tensor:
-        outputs = self.mlp_mid(embedding)
-        return outputs
-
     def get_diff(
         self, embedding:Tensor
     ) -> Tensor:
@@ -187,6 +175,12 @@ class ReflectSamplingNeRFNerfField(Field):
         self, embedding:Tensor
     ) -> Tensor:
         outputs = self.field_output_tint(embedding)
+        return outputs
+
+    def get_bottleneck(
+        self, embedding: Tensor
+    ) -> Tensor:
+        outputs = self.mlp_bottleneck(embedding)
         return outputs
     
     def get_low(
