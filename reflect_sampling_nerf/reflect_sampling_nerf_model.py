@@ -42,12 +42,12 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
     https://github.com/google-research/multinerf/blob/main/configs/blender_refnerf.gin
     """
 
-    num_coarse_samples: int = 64
+    num_coarse_samples: int = 128
     """Number of samples in coarse field evaluation"""
     num_importance_samples: int = 128
     """Number of samples in fine field evaluation"""
     
-    num_reflect_coarse_samples: int = 64
+    num_reflect_coarse_samples: int = 128
     """Number of samples in coarse field evaluation"""
     num_reflect_importance_samples: int = 128
     """Number of samples in fine field evaluation"""
@@ -185,7 +185,7 @@ class ReflectSamplingNeRFModel(Model):
         
         # rgb_fine = self.field.get_padding(diff_fine + tint_fine*low_fine)
         
-        mask = (accumulation_fine>1e-2).reshape(-1)
+        mask = (accumulation_fine>1e-4).reshape(-1)
 
         pred_normals_outputs_fine = self.field.get_pred_normals(embedding_fine)
         if self.training:
@@ -194,90 +194,15 @@ class ReflectSamplingNeRFModel(Model):
             normals_outputs_fine = pred_normals_outputs_fine
         n_dot_d_fine = torch.sum(pred_normals_outputs_fine*ray_samples_pdf.frustums.directions, dim=-1, keepdim=True)
         pred_normals_fine = self.renderer_normals(pred_normals_outputs_fine, weights_fine)
-        
-
-        # if not mask.any():
-
-
-        origins = ray_bundle.origins + depth_fine*ray_bundle.directions
-        origins = origins.detach()
-        n_dot_d = torch.sum(pred_normals_fine*ray_bundle.directions, dim=-1, keepdim=True)
-        reflections = ray_bundle.directions - 2*n_dot_d*pred_normals_fine
-        reflections = torch.nn.functional.normalize(reflections)
-        
-        print(diff_fine[mask, :].shape)
-
-        '''
-        roughness to pixelarea as spherical gaussian lobe
-        g(|x-mean|, sigma^2) = exp(-|x-mean|^2/(2*sigma^2))
-        sigma^2 = 1/sharpness
-        sharpness = 2/roughness^2/(4*|direction*normal|)
-        sigma^2 = roughness^2*2*|direction*normal|
-        '''
 
         print("roughness :",torch.quantile(roughness_fine.cpu(), q=torch.linspace(0,1,5)).detach().numpy())
-        print("diffuse   :", torch.quantile(torch.sum(diff_fine.cpu(), dim=-1), q=torch.linspace(0,1,5)).detach().numpy())
-        print("tint      :", torch.quantile(torch.sum(tint_fine.cpu(), dim=-1), q=torch.linspace(0,1,5)).detach().numpy())
-        reflect_ray_bundle = RayBundle(
-            origins=origins,
-            directions=reflections,
-            pixel_area=roughness_fine**2*2*torch.abs(n_dot_d)*torch.pi,
-            nears=torch.zeros_like(ray_bundle.nears),
-            fars=torch.ones_like(ray_bundle.fars)*self.config.num_reflect_coarse_samples,
-        )
-
-        ray_samples_reciprocal = self.sampler_reciprocal(reflect_ray_bundle)
-
-        mean_reflect_coarse, cov_reflect_coarse = self.field.get_blob(ray_samples_reciprocal)
-        mean_reflect_coarse, cov_reflect_coarse = self.field.contract(mean_reflect_coarse, cov_reflect_coarse)
-        density_outputs_reflect_coarse, embedding_reflect_coarse = self.field.get_reflect_density(mean_reflect_coarse, cov_reflect_coarse)
-        weights_reflect_coarse = ray_samples_reciprocal.get_weights(density_outputs_reflect_coarse)
+        print("diff+tint :", torch.quantile(torch.sum((diff_fine+tint_fine).cpu(), dim=-1), q=torch.linspace(0,1,5)).detach().numpy())
         
-        # roughness_reflect_outputs_coarse = self.field.get_roughness(embedding_reflect_coarse)
-        # bottleneck_reflect_coarse = self.field.get_bottleneck(embedding_reflect_coarse)
-        low_reflect_outputs_coarse = self.field.get_low(ray_samples_reciprocal.frustums.directions, embedding_reflect_coarse)
-
-        # pred_normals_outputs_reflect_coarse = self.field.get_pred_normals(embedding_reflect_coarse)
-        # n_dot_d_reflect_coarse = torch.sum(pred_normals_outputs_reflect_coarse*ray_samples_reciprocal.frustums.directions, dim=-1, keepdim=True)
-
-        # reflect_coarse = self.renderer_reflect(low_reflect_outputs_coarse, weights_reflect_coarse)
-        
-        diff_reflect_outputs_coarse = self.field.get_diff(embedding_reflect_coarse)
-        tint_reflect_outputs_coarse = self.field.get_tint(embedding_reflect_coarse)
-        reflect_coarse = self.renderer_reflect(diff_reflect_outputs_coarse + tint_reflect_outputs_coarse * low_reflect_outputs_coarse, weights_reflect_coarse)
-        rgb_coarse = self.field.get_padding(diff_coarse + tint_coarse * reflect_coarse)
-        rgb_fine_coarse = self.field.get_padding(diff_fine + tint_fine * reflect_coarse)
-
-
-
-        ray_samples_recflect_pdf = self.sampler_reflect_pdf(reflect_ray_bundle, ray_samples_reciprocal, weights_reflect_coarse)
-
-        mean_reflect_fine, cov_reflect_fine = self.field.get_blob(ray_samples_recflect_pdf)
-        mean_reflect_fine, cov_reflect_fine = self.field.contract(mean_reflect_fine, cov_reflect_fine)
-        density_outputs_reflect_fine, embedding_reflect_fine = self.field.get_reflect_density(mean_reflect_fine, cov_reflect_fine)
-        weights_reflect_fine = ray_samples_recflect_pdf.get_weights(density_outputs_reflect_fine)
-        
-        # roughness_reflect_outputs_fine = self.field.get_roughness(embedding_reflect_fine)
-        # bottleneck_reflect_fine = self.field.get_bottleneck(embedding_reflect_fine)
-        low_reflect_outputs_fine = self.field.get_low(ray_samples_recflect_pdf.frustums.directions, embedding_reflect_fine)
-
-        # pred_normals_outputs_reflect_fine = self.field.get_pred_normals(embedding_reflect_fine)
-        # n_dot_d_reflect_fine = torch.sum(pred_normals_outputs_reflect_fine*ray_samples_recflect_pdf.frustums.directions, dim=-1, keepdim=True)
-        
-        # reflect_fine = self.renderer_reflect(low_reflect_outputs_fine, weights_reflect_fine)
-        
-        diff_reflect_outputs_fine = self.field.get_diff(embedding_reflect_fine)
-        tint_reflect_outputs_fine = self.field.get_tint(embedding_reflect_fine)
-        reflect_fine = self.renderer_reflect(diff_reflect_outputs_fine + tint_reflect_outputs_fine*low_reflect_outputs_fine, weights_reflect_fine)
-        reflect_fine = self.field.get_padding(reflect_fine)
-        rgb_fine = self.field.get_padding(diff_fine + tint_fine * reflect_fine)
-
-
         
         outputs = {
-            "rgb_coarse": rgb_coarse,
-            "rgb_fine_coarse": rgb_fine_coarse,
-            "rgb_fine": rgb_fine,
+            "rgb_coarse": diff_coarse,
+            "rgb_fine_coarse": diff_fine,
+            "rgb_fine": diff_fine,
             "accumulation_coarse": accumulation_coarse,
             "accumulation_fine": accumulation_fine,
             "depth_coarse": depth_coarse,
@@ -291,6 +216,88 @@ class ReflectSamplingNeRFModel(Model):
             "n_dot_d_coarse": n_dot_d_coarse,
             "n_dot_d_fine": n_dot_d_fine,
         }
+        if not mask.any():
+            return outputs
+        
+        print(mask[mask].shape)
+
+
+        origins = ray_bundle.origins[mask, :] + depth_fine[mask, :]*ray_bundle.directions[mask, :]
+        origins = origins.detach()
+        n_dot_d = torch.sum(pred_normals_fine[mask, :]*ray_bundle.directions[mask, :], dim=-1, keepdim=True)
+        reflections = ray_bundle.directions[mask, :] - 2*n_dot_d*pred_normals_fine[mask, :]
+        reflections = torch.nn.functional.normalize(reflections)
+
+        '''
+        roughness to pixelarea as spherical gaussian lobe
+        g(|x-mean|, sigma^2) = exp(-|x-mean|^2/(2*sigma^2))
+        sigma^2 = 1/sharpness
+        sharpness = 2/roughness^2/(4*|direction*normal|)
+        sigma^2 = roughness^2*2*|direction*normal|
+        '''
+        reflect_ray_bundle = RayBundle(
+            origins=origins,
+            directions=reflections,
+            pixel_area=torch.abs(n_dot_d)*2*torch.pi*roughness_fine[mask, :]**2,
+            nears=torch.zeros_like(ray_bundle.nears[mask, :]),
+            fars=torch.ones_like(ray_bundle.fars[mask, :])*2**8
+        )
+
+        ray_samples_reciprocal = self.sampler_reciprocal(reflect_ray_bundle)
+
+        mean_reflect_coarse, cov_reflect_coarse = self.field.get_blob(ray_samples_reciprocal)
+        mean_reflect_coarse, cov_reflect_coarse = self.field.contract(mean_reflect_coarse, cov_reflect_coarse)
+        density_outputs_reflect_coarse, embedding_reflect_coarse = self.field.get_reflect_density(mean_reflect_coarse, cov_reflect_coarse)
+        weights_reflect_coarse = ray_samples_reciprocal.get_weights(density_outputs_reflect_coarse)
+        
+        # roughness_reflect_outputs_coarse = self.field.get_roughness(embedding_reflect_coarse)
+        bottleneck_reflect_coarse = self.field.get_bottleneck(embedding_reflect_coarse)
+        low_reflect_outputs_coarse = self.field.get_low(ray_samples_reciprocal.frustums.directions, bottleneck_reflect_coarse)
+
+        # pred_normals_outputs_reflect_coarse = self.field.get_pred_normals(embedding_reflect_coarse)
+        # n_dot_d_reflect_coarse = torch.sum(pred_normals_outputs_reflect_coarse*ray_samples_reciprocal.frustums.directions, dim=-1, keepdim=True)
+
+        # reflect_coarse = self.renderer_reflect(low_reflect_outputs_coarse, weights_reflect_coarse)
+        
+        diff_reflect_outputs_coarse = self.field.get_diff(embedding_reflect_coarse)
+        tint_reflect_outputs_coarse = self.field.get_tint(embedding_reflect_coarse)
+        reflect_coarse = self.renderer_reflect(diff_reflect_outputs_coarse + tint_reflect_outputs_coarse * low_reflect_outputs_coarse, weights_reflect_coarse)
+        
+        rgb_coarse = outputs["rgb_coarse"]
+        rgb_coarse[mask, :] = rgb_coarse[mask, :] + tint_coarse[mask, :] * reflect_coarse
+        outputs["rgb_coarse"] = self.field.get_padding(rgb_coarse)
+        
+        rgb_fine_coarse = outputs["rgb_fine_coarse"]
+        rgb_fine_coarse[mask, :] = rgb_fine_coarse[mask, :] + tint_fine[mask, :] * reflect_coarse
+        outputs["rgb_fine_coarse"] = self.field.get_padding(rgb_fine_coarse)
+
+
+
+        ray_samples_recflect_pdf = self.sampler_reflect_pdf(reflect_ray_bundle, ray_samples_reciprocal, weights_reflect_coarse)
+
+        mean_reflect_fine, cov_reflect_fine = self.field.get_blob(ray_samples_recflect_pdf)
+        mean_reflect_fine, cov_reflect_fine = self.field.contract(mean_reflect_fine, cov_reflect_fine)
+        density_outputs_reflect_fine, embedding_reflect_fine = self.field.get_reflect_density(mean_reflect_fine, cov_reflect_fine)
+        weights_reflect_fine = ray_samples_recflect_pdf.get_weights(density_outputs_reflect_fine)
+        
+        # roughness_reflect_outputs_fine = self.field.get_roughness(embedding_reflect_fine)
+        bottleneck_reflect_fine = self.field.get_bottleneck(embedding_reflect_fine)
+        low_reflect_outputs_fine = self.field.get_low(ray_samples_recflect_pdf.frustums.directions, bottleneck_reflect_fine)
+
+        # pred_normals_outputs_reflect_fine = self.field.get_pred_normals(embedding_reflect_fine)
+        # n_dot_d_reflect_fine = torch.sum(pred_normals_outputs_reflect_fine*ray_samples_recflect_pdf.frustums.directions, dim=-1, keepdim=True)
+        
+        # reflect_fine = self.renderer_reflect(low_reflect_outputs_fine, weights_reflect_fine)
+        
+        diff_reflect_outputs_fine = self.field.get_diff(embedding_reflect_fine)
+        tint_reflect_outputs_fine = self.field.get_tint(embedding_reflect_fine)
+        reflect_fine = self.renderer_reflect(diff_reflect_outputs_fine + tint_reflect_outputs_fine*low_reflect_outputs_fine, weights_reflect_fine)
+        reflect_fine = self.field.get_padding(reflect_fine)
+        
+        rgb_fine = outputs["rgb_fine"]
+        rgb_fine[mask, :] = rgb_fine[mask, :] + tint_fine[mask, :] * reflect_fine
+        outputs["rgb_fine"] = self.field.get_padding(rgb_fine)
+
         return outputs
 
     def get_loss_dict(self, outputs, batch, metrics_dict=None):

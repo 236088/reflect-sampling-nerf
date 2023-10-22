@@ -40,13 +40,13 @@ class ReflectSamplingNeRFNerfField(Field):
         base_mlp_num_layers: int = 8,
         base_mlp_layer_width: int = 256,
         skip_connections: Tuple[int] = (4,),
-        low_mlp_num_layers: int = 2,
+        low_mlp_num_layers: int = 1,
         low_mlp_layer_width: int = 128,
         spatial_distortion: Optional[SpatialDistortion] = None,
         density_bias: float = 0.5,
         density_reflect_bias: float = 0.0,
         roughness_bias: float = -1.0,
-        padding: float = 0.01,
+        padding: float = 0.001,
     ) -> None:
         super().__init__()
         self.position_encoding = position_encoding
@@ -67,7 +67,7 @@ class ReflectSamplingNeRFNerfField(Field):
         self.field_output_reflect_density = DensityFieldHead(in_dim=self.mlp_base.get_out_dim(), activation=None)
         self.density_reflect_bias = density_reflect_bias
         
-        self.field_output_normals = PredNormalsFieldHead(in_dim=self.mlp_base.get_out_dim())
+        self.field_output_normals = PredNormalsFieldHead(in_dim=self.mlp_base.get_out_dim(), activation=None)
 
         self.field_output_roughness = FieldHead(out_dim=1, field_head_name="roughness", in_dim=self.mlp_base.get_out_dim(), activation=None)
         self.roughness_bias = roughness_bias
@@ -81,7 +81,7 @@ class ReflectSamplingNeRFNerfField(Field):
 
         self.field_output_tint = RGBFieldHead(self.mlp_base.get_out_dim())
 
-        self.mlp_bottleneck = FieldHead(out_dim=low_mlp_layer_width, field_head_name="bottleneck", in_dim=self.mlp_base.get_out_dim(), activation=None)
+        self.mlp_bottleneck = FieldHead(out_dim=self.mlp_base.get_out_dim(), field_head_name="bottleneck", in_dim=self.mlp_base.get_out_dim(), activation=None)
         
         self.mlp_low = MLP(
             in_dim=self.direction_encoding.get_out_dim()+self.mlp_base.get_out_dim(),
