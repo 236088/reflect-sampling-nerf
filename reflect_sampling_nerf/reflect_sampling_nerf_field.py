@@ -46,7 +46,7 @@ class ReflectSamplingNeRFNerfField(Field):
         density_bias: float = 0.5,
         density_reflect_bias: float = 0.0,
         roughness_bias: float = -1.0,
-        padding: float = 0.001,
+        padding: float = 0.02,
     ) -> None:
         super().__init__()
         self.position_encoding = position_encoding
@@ -189,15 +189,14 @@ class ReflectSamplingNeRFNerfField(Field):
         encoded_dir = self.direction_encoding(directions)
         mlp_out = self.mlp_low(torch.cat([encoded_dir, embedding], dim=-1))
         outputs = self.field_output_low(mlp_out)
-        outputs = self.get_padding(outputs)
         return outputs
     
 
         
 
     def get_padding(self, inputs: Tensor):
-        outputs = (1 + 2*self.padding)*inputs - self.padding
-        outputs = torch.clip(outputs, 0.0, 1.0)
+        # outputs = (1 + 2*self.padding)*inputs - self.padding
+        outputs = torch.clip(inputs, 0.0, 1.0)
         return outputs
        
     # TODO: Override any potential methods to implement your own field.
