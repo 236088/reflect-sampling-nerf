@@ -61,6 +61,7 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
         "predicted_normal_loss_fine": 3e-4,
         "orientation_loss_coarse": 1e-2,
         "orientation_loss_fine": 1e-1,
+        "reflect_loss":1e-1,
         })
 
     enable_temporal_distortion: bool = False
@@ -256,7 +257,7 @@ class ReflectSamplingNeRFModel(Model):
         reflect_ray_bundle = RayBundle(
             origins=origins.detach(),
             directions=reflections.detach(),
-            pixel_area=2*torch.pi*roughness_fine[mask, :]**2,
+            pixel_area=2*torch.pi*torch.abs(n_dot_d.detach())*roughness_fine[mask, :]**2,
             nears=torch.zeros_like(ray_bundle.nears[mask, :]),
             fars=torch.ones_like(ray_bundle.fars[mask, :])*2**8
         )
@@ -280,7 +281,6 @@ class ReflectSamplingNeRFModel(Model):
         low_outputs_reflect_coarse = self.field.get_low(reflections_reflect_coarse, n_dot_d_reflect_coarse, bottleneck_reflect_coarse, raw_roughness_outputs_reflect_coarse)
         
         reflect_coarse = self.renderer_reflect(diff_outputs_reflect_coarse+tint_outputs_reflect_coarse*low_outputs_reflect_coarse, weights_reflect_coarse)
-        reflect_coarse = self.field.get_padding(reflect_coarse)
 
         outputs["rgb_coarse"][mask, :] = diff_coarse[mask, :] + tint_coarse[mask, :] * reflect_coarse
         outputs["rgb_coarse"][mask, :] = self.field.get_padding(outputs["rgb_coarse"][mask, :])
@@ -306,7 +306,6 @@ class ReflectSamplingNeRFModel(Model):
         low_outputs_reflect_fine = self.field.get_low(reflections_reflect_fine, n_dot_d_reflect_fine, bottleneck_reflect_fine, raw_roughness_outputs_reflect_fine)
         
         reflect_fine = self.renderer_reflect(diff_outputs_reflect_fine+tint_outputs_reflect_fine*low_outputs_reflect_fine, weights_reflect_fine)
-        reflect_fine = self.field.get_padding(reflect_fine)
 
         outputs["rgb_fine"][mask, :] = diff_fine[mask, :] + tint_fine[mask, :] * reflect_fine
         outputs["rgb_fine"][mask, :] = self.field.get_padding(outputs["rgb_fine"][mask, :])

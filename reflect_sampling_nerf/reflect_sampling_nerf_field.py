@@ -44,7 +44,7 @@ class ReflectSamplingNeRFNerfField(Field):
         low_mlp_layer_width: int = 128,
         spatial_distortion: Optional[SpatialDistortion] = None,
         density_bias: float = 0.5,
-        density_reflect_bias: float = 0.0,
+        density_reflect_bias: float = 0.3,
         roughness_bias: float = -1.0,
         padding: float = 0.01,
     ) -> None:
@@ -87,7 +87,7 @@ class ReflectSamplingNeRFNerfField(Field):
             in_dim=self.direction_encoding.get_out_dim()+1+self.mlp_bottleneck.get_out_dim(),
             num_layers=low_mlp_num_layers,
             layer_width=low_mlp_layer_width,
-            out_activation=nn.ReLU(),
+            out_activation=nn.ReLU()
         )
         self.field_output_low = RGBFieldHead(self.mlp_low.get_out_dim())
         
@@ -189,7 +189,6 @@ class ReflectSamplingNeRFNerfField(Field):
         encoded_dir = self.direction_encoding(directions, roughness)
         mlp_out = self.mlp_low(torch.cat([encoded_dir, n_dot_d, bottleneck], dim=-1))
         outputs = self.field_output_low(mlp_out)
-        outputs = self.get_padding(outputs)
         return outputs
     
 
