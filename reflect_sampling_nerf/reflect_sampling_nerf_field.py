@@ -44,7 +44,7 @@ class ReflectSamplingNeRFNerfField(Field):
         low_mlp_layer_width: int = 128,
         spatial_distortion: Optional[SpatialDistortion] = None,
         density_bias: float = 0.5,
-        density_reflect_bias: float = 0.3,
+        density_reflect_bias: float = 0.0,
         roughness_bias: float = -1.0,
         padding: float = 0.01,
     ) -> None:
@@ -123,6 +123,15 @@ class ReflectSamplingNeRFNerfField(Field):
             return mean_contract, cov_contract, mask
         else:
             return mean_contract, cov_contract
+    
+    def get_contract_inf(
+        self, directions:Tensor, sqradius:Tensor
+    ) -> Tuple[Tensor, Tensor]:
+        outer = directions[...,:,None]*directions[...,None,:]
+        eyes = torch.eye(directions.shape[-1], device=directions.device).expand(outer.shape)
+        mean = 2*directions
+        cov = 0.6*outer + 2.4*sqradius[...,None]*(eyes-outer)
+        return mean, cov
         
     def get_density(
         self, mean:Tensor, cov:Tensor, requires_density_grad:bool = False
@@ -191,6 +200,21 @@ class ReflectSamplingNeRFNerfField(Field):
         outputs = self.field_output_low(mlp_out)
         return outputs
     
+    
+    def get_inf_color(
+        self, directions:Tensor, sqradius:Tensor
+    ) ->Tensor:
+        mean, cov = self.get_contract_inf(directions, sqradius)
+        _, embedding = self.get_density(mean, cov)
+        diff = self.get_diff(embedding)
+        tint = self.get_tint(embedding)
+        diff, tint = self.get_normalize(diff, tint)
+        normal = self.get_pred_normals(embedding)
+        reflection, n_dot_d = self.get_reflection(directions, normal)
+        bottleneck = self.get_bottleneck(embedding)
+        roughness = self.get_roughness(embedding)
+        low = self.get_low(reflection, n_dot_d, bottleneck, roughness)
+        return diff + tint*low
 
     
     def get_reflection(self, directions:Tensor, normals:Tensor) -> Tuple[Tensor, Tensor]:
