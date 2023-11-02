@@ -40,7 +40,7 @@ class ReflectSamplingNeRFNerfField(Field):
         base_mlp_num_layers: int = 8,
         base_mlp_layer_width: int = 256,
         skip_connections: Tuple[int] = (4,),
-        low_mlp_num_layers: int = 1,
+        low_mlp_num_layers: int = 2,
         low_mlp_layer_width: int = 128,
         spatial_distortion: Optional[SpatialDistortion] = None,
         density_bias: float = 0.5,
@@ -84,7 +84,7 @@ class ReflectSamplingNeRFNerfField(Field):
         self.mlp_bottleneck = FieldHead(out_dim=self.mlp_base.get_out_dim(), field_head_name="bottleneck", in_dim=self.mlp_base.get_out_dim(), activation=None)
         
         self.mlp_low = MLP(
-            in_dim=self.direction_encoding.get_out_dim()+self.mlp_bottleneck.get_out_dim(),
+            in_dim=self.direction_encoding.get_out_dim()+1+self.mlp_bottleneck.get_out_dim(),
             num_layers=low_mlp_num_layers,
             layer_width=low_mlp_layer_width,
             out_activation=nn.ReLU()
@@ -94,16 +94,15 @@ class ReflectSamplingNeRFNerfField(Field):
     
 
     def get_blob(
-        self, ray_samples: RaySamples
+        self, ray_samples: RaySamples, enable_contract: bool=False, mask_return:bool=False
     ) -> Tuple[Tensor, Tensor]:
         gaussian_samples = ray_samples.frustums.get_gaussian_blob()
         if self.spatial_distortion is not None:
             gaussian_samples = self.spatial_distortion(gaussian_samples)
-        return gaussian_samples.mean, gaussian_samples.cov
-    
-    def contract(
-        self, mean: Tensor, cov: Tensor, mask_return:bool = False
-    ) -> Tensor:
+        if not enable_contract:
+            return gaussian_samples.mean, gaussian_samples.cov
+        
+        mean = gaussian_samples.mean
         norm2 = torch.sum(mean**2, dim=-1, keepdim=True)
         norm = torch.sqrt(norm2)
         mask = norm>1
@@ -116,7 +115,7 @@ class ReflectSamplingNeRFNerfField(Field):
         # jacobian = torch.autograd.functional.jacobian(mean_contract, mean)
         jacobian = torch.where(mask[...,None], ((2*norm-2)*(eyes-outer)+eyes)/norm2, eyes)
         ''' J*cov*J.T :(J.T=J)'''
-        cov_contract = torch.matmul(torch.matmul(jacobian, cov), jacobian)
+        cov_contract = torch.matmul(torch.matmul(jacobian, gaussian_samples.cov), jacobian)
         for i in range(cov_contract.shape[-1]):
             cov_contract[...,i,i]=torch.nn.functional.relu(cov_contract[...,i,i])
         if mask_return:
@@ -185,7 +184,7 @@ class ReflectSamplingNeRFNerfField(Field):
         self, embedding:Tensor
     ) -> Tensor:
         outputs = self.field_output_tint(embedding)
-        outputs = self.softplus(outputs)
+        outputs = self.softplus(outputs+1.0)
         return outputs
 
     def get_bottleneck(
@@ -195,10 +194,14 @@ class ReflectSamplingNeRFNerfField(Field):
         return outputs
     
     def get_low(
-        self, directions:Tensor, bottleneck:Tensor, roughness:Tensor
+        self, directions:Tensor, n_dot_d: Tensor, bottleneck:Tensor, roughness:Tensor
     ) ->Tensor:
-        encoded_dir = self.direction_encoding(directions, roughness)
-        mlp_out = self.mlp_low(torch.cat([encoded_dir, bottleneck], dim=-1))
+        encoded_dir = self.direction_encoding(directions)
+        for l in range(self.direction_encoding.levels):
+            begin = l**2
+            end = (l+1)**2
+            encoded_dir[...,begin:end]*=torch.exp(-roughness*0.5*l*(l+2))
+        mlp_out = self.mlp_low(torch.cat([encoded_dir, n_dot_d, bottleneck], dim=-1))
         outputs = self.field_output_low(mlp_out)
         return outputs
     
