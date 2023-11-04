@@ -40,7 +40,7 @@ class ReflectSamplingNeRFNerfField(Field):
         base_mlp_num_layers: int = 8,
         base_mlp_layer_width: int = 256,
         skip_connections: Tuple[int] = (4,),
-        low_mlp_num_layers: int = 2,
+        low_mlp_num_layers: int = 1,
         low_mlp_layer_width: int = 128,
         spatial_distortion: Optional[SpatialDistortion] = None,
         density_bias: float = 0.5,
@@ -211,7 +211,7 @@ class ReflectSamplingNeRFNerfField(Field):
     ) ->Tensor:
         mean, cov = self.get_contract_inf(directions, sqradius)
         _, embedding = self.get_density(mean, cov)
-        diff = self.get_diff(embedding)
+        diff, tint = self.get_normalized(embedding)
         return diff
 
     

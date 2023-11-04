@@ -233,6 +233,7 @@ class ReflectSamplingNeRFModel(Model):
         pred_normals_fine = self.renderer_normals(pred_normals_outputs_fine, weights_fine)
         roughness_outputs_fine = 1-torch.exp(-raw_roughness_outputs_fine)
         roughness_fine = self.renderer_roughness(roughness_outputs_fine, weights_fine)
+
         '''
         raw_roughness_fine =self.renderer_roughness(raw_roughness_outputs_fine, weights_fine)
         roughness_fine = 1-torch.exp(-raw_roughness_fine)
@@ -282,10 +283,11 @@ class ReflectSamplingNeRFModel(Model):
         mean_reflect_coarse, cov_reflect_coarse = self.field.get_blob(ray_samples_reciprocal, enable_contract=True)
         density_outputs_reflect_coarse, embedding_reflect_coarse = self.field.get_reflect_density(mean_reflect_coarse, cov_reflect_coarse)
         weights_reflect_coarse = ray_samples_reciprocal.get_weights(density_outputs_reflect_coarse)
-                
-        diff_outputs_reflect_coarse, tint_outputs_reflect_coarse = self.field.get_normalized(embedding_reflect_coarse)
         
-        reflect_coarse = self.renderer_reflect(diff_outputs_reflect_coarse, weights_reflect_coarse, background_color = reflect_background)
+        diff_outputs_reflect_coarse, tint_outputs_reflect_coarse = self.field.get_normalized(embedding_reflect_coarse)
+
+        reflect_coarse = self.renderer_rgb(diff_outputs_reflect_coarse, weights_reflect_coarse)
+        reflect_coarse = self.field.get_padding(reflect_coarse)
 
         outputs["rgb_reflect_coarse"][mask, :] = diff_fine[mask, :] + tint_fine[mask, :] * reflect_coarse
         outputs["rgb_reflect_coarse"][mask, :] = self.field.get_padding(outputs["rgb_reflect_coarse"][mask, :])
