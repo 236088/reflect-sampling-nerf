@@ -40,7 +40,7 @@ class ReflectSamplingNeRFNerfField(Field):
         base_mlp_num_layers: int = 8,
         base_mlp_layer_width: int = 256,
         skip_connections: Tuple[int] = (4,),
-        low_mlp_num_layers: int = 1,
+        low_mlp_num_layers: int = 2,
         low_mlp_layer_width: int = 128,
         spatial_distortion: Optional[SpatialDistortion] = None,
         density_bias: float = 0.5,
@@ -80,11 +80,9 @@ class ReflectSamplingNeRFNerfField(Field):
         self.field_output_diff = RGBFieldHead(self.mlp_base.get_out_dim(), activation=None)
 
         self.field_output_tint = RGBFieldHead(self.mlp_base.get_out_dim(), activation=None)
-
-        self.mlp_bottleneck = FieldHead(out_dim=self.mlp_base.get_out_dim(), field_head_name="bottleneck", in_dim=self.mlp_base.get_out_dim(), activation=None)
         
         self.mlp_low = MLP(
-            in_dim=self.direction_encoding.get_out_dim()+1+self.mlp_bottleneck.get_out_dim(),
+            in_dim=self.direction_encoding.get_out_dim()+1+self.mlp_base.get_out_dim(), 
             num_layers=low_mlp_num_layers,
             layer_width=low_mlp_layer_width,
             out_activation=nn.ReLU()
@@ -177,31 +175,26 @@ class ReflectSamplingNeRFNerfField(Field):
         self, embedding:Tensor
     ) -> Tensor:
         outputs = self.field_output_diff(embedding)
-        outputs = self.softplus(outputs)
+        outputs = self.softplus(outputs-0.5)
         return outputs
 
     def get_tint(
         self, embedding:Tensor
     ) -> Tensor:
         outputs = self.field_output_tint(embedding)
-        outputs = self.softplus(outputs+1.0)
+        outputs = self.softplus(outputs+0.5)
         return outputs
 
-    def get_bottleneck(
-        self, embedding: Tensor
-    ) -> Tensor:
-        outputs = self.mlp_bottleneck(embedding)
-        return outputs
     
     def get_low(
-        self, directions:Tensor, n_dot_d: Tensor, bottleneck:Tensor, roughness:Tensor
+        self, directions:Tensor, n_dot_d: Tensor, embedding:Tensor, roughness:Tensor
     ) ->Tensor:
         encoded_dir = self.direction_encoding(directions)
         for l in range(self.direction_encoding.levels):
             begin = l**2
             end = (l+1)**2
             encoded_dir[...,begin:end]*=torch.exp(-roughness*0.5*l*(l+2))
-        mlp_out = self.mlp_low(torch.cat([encoded_dir, n_dot_d, bottleneck], dim=-1))
+        mlp_out = self.mlp_low(torch.cat([encoded_dir, n_dot_d, embedding], dim=-1))
         outputs = self.field_output_low(mlp_out)
         return outputs
     

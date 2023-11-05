@@ -53,8 +53,8 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
     """Number of samples in fine field evaluation"""
     
     loss_coefficients: Dict[str, float] = to_immutable_dict({
-        "rgb_loss_coarse": 3e-2,
-        "rgb_loss_fine": 3e-1,
+        "rgb_loss_coarse": 1e-2,
+        "rgb_loss_fine": 1e-2,
         "rgb_loss_reflect_coarse": 1.0,
         # "rgb_loss_reflect_low": 1.0,
         "predicted_normal_loss_coarse": 3e-5,
@@ -155,15 +155,10 @@ class ReflectSamplingNeRFModel(Model):
         reflections_coarse, n_dot_d_coarse = self.field.get_reflection(ray_samples_uniform.frustums.directions, pred_normals_outputs_coarse)
                 
         raw_roughness_outputs_coarse = self.field.get_roughness(embedding_coarse)
-        bottleneck_coarse = self.field.get_bottleneck(embedding_coarse)
-        low_outputs_coarse = self.field.get_low(reflections_coarse, n_dot_d_coarse, bottleneck_coarse, raw_roughness_outputs_coarse)
+        low_outputs_coarse = self.field.get_low(reflections_coarse, n_dot_d_coarse, embedding_coarse, raw_roughness_outputs_coarse)
 
         rgb_low_coarse = self.renderer_rgb(low_outputs_coarse, weights_coarse)
         rgb_low_coarse = self.field.get_padding(rgb_low_coarse)
-        # diff_outputs_coarse, tint_outputs_coarse  = self.field.get_normalized(embedding_coarse)
-                
-        # diff_coarse = self.renderer_rgb(diff_outputs_coarse, weights_coarse)
-        # tint_coarse = self.renderer_factor(tint_outputs_coarse, weights_coarse)
         
         
 
@@ -178,10 +173,6 @@ class ReflectSamplingNeRFModel(Model):
         depth_fine = self.renderer_depth(weights_fine, ray_samples_pdf)
         
         diff_outputs_fine, tint_outputs_fine = self.field.get_normalized(embedding_fine)
-        
-        # rgb_fine = self.renderer_rgb(diff_outputs_fine, weights_fine)
-        # rgb_fine = self.field.get_padding(rgb_fine)
-       
 
 
         pred_normals_outputs_fine = self.field.get_pred_normals(embedding_fine)
@@ -192,8 +183,7 @@ class ReflectSamplingNeRFModel(Model):
         reflections_fine, n_dot_d_fine = self.field.get_reflection(ray_samples_pdf.frustums.directions, pred_normals_outputs_fine)
         
         raw_roughness_outputs_fine = self.field.get_roughness(embedding_fine)
-        bottleneck_fine = self.field.get_bottleneck(embedding_fine)
-        low_outputs_fine = self.field.get_low(reflections_fine, n_dot_d_fine, bottleneck_fine, raw_roughness_outputs_fine)
+        low_outputs_fine = self.field.get_low(reflections_fine, n_dot_d_fine, embedding_fine, raw_roughness_outputs_fine)
 
         rgb_low_fine = self.renderer_rgb(low_outputs_fine, weights_fine)
         rgb_low_fine = self.field.get_padding(rgb_low_fine)
@@ -288,8 +278,7 @@ class ReflectSamplingNeRFModel(Model):
         reflections_reflect, n_dot_d_reflect = self.field.get_reflection(ray_samples_reflect.frustums.directions, pred_normals_outputs_reflect)
         
         raw_roughness_outputs_reflect = self.field.get_roughness(embedding_reflect_coarse)
-        bottleneck_reflect = self.field.get_bottleneck(embedding_reflect_coarse)
-        low_outputs_reflect = self.field.get_low(reflections_reflect, n_dot_d_reflect, bottleneck_reflect, raw_roughness_outputs_reflect)
+        low_outputs_reflect = self.field.get_low(reflections_reflect, n_dot_d_reflect,embedding_reflect_coarse, raw_roughness_outputs_reflect)
 
         rgb_low_reflect = self.renderer_rgb(low_outputs_reflect, weights_reflect_coarse)
         rgb_low_reflect = self.field.get_padding(rgb_low_reflect)
