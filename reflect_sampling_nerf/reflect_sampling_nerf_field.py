@@ -129,7 +129,7 @@ class ReflectSamplingNeRFNerfField(Field):
         outer = directions[...,:,None]*directions[...,None,:]
         eyes = torch.eye(directions.shape[-1], device=directions.device).expand(outer.shape)
         mean = 2*directions
-        cov = 0.6*outer + 2.4*sqradius[...,None]*(eyes-outer)
+        cov = 0.6*sqradius[...,None]*(eyes-outer)
         return mean, cov
         
     def get_density(
