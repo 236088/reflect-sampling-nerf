@@ -40,13 +40,11 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
     Add your custom model config parameters here.
     """
 
-    num_coarse_samples: int = 64
+    num_coarse_samples: int = 128
     """Number of samples in coarse field evaluation"""
     num_importance_samples: int = 128
     """Number of samples in fine field evaluation"""
     
-    loss_coefficients: Dict[str, float] = to_immutable_dict({"rgb_loss": 1.0, "n_loss":1e-3, "n_reg_loss":1e-3})
-
     enable_temporal_distortion: bool = False
     """Specifies whether or not to include ray warping based on time."""
     temporal_distortion_params: Dict[str, Any] = to_immutable_dict({"kind": TemporalDistortionKind.DNERF})
@@ -90,7 +88,7 @@ class ReflectSamplingNeRFModel(Model):
         self.sampler_pdf = PDFSampler(num_samples=self.config.num_importance_samples, include_original=False)
 
         # renderers
-        self.renderer_rgb = RGBRenderer(background_color=colors.BLACK)
+        self.renderer_rgb = RGBRenderer(background_color=colors.WHITE)
         self.renderer_accumulation = AccumulationRenderer()
         self.renderer_depth = DepthRenderer()
 
@@ -121,6 +119,7 @@ class ReflectSamplingNeRFModel(Model):
         weights_coarse = ray_samples_uniform.get_weights(density_outputs_coarse)
         rgb_outputs_coarse = self.field.get_outputs(ray_samples_uniform, embedding)
         rgb_coarse = self.renderer_rgb(rgb=rgb_outputs_coarse, weights=weights_coarse)
+        rgb_coarse = self.field.get_padding(rgb_coarse)
         accumulation_coarse = self.renderer_accumulation(weights_coarse)
         depth_coarse = self.renderer_depth(weights_coarse, ray_samples_uniform)
 
@@ -132,6 +131,7 @@ class ReflectSamplingNeRFModel(Model):
         weights_fine = ray_samples_pdf.get_weights(density_outputs_fine)
         rgb_outputs_fine = self.field.get_outputs(ray_samples_pdf, embedding)
         rgb_fine = self.renderer_rgb(rgb=rgb_outputs_fine, weights=weights_fine)
+        rgb_fine = self.field.get_padding(rgb_fine)
         accumulation_fine = self.renderer_accumulation(weights_fine)
         depth_fine = self.renderer_depth(weights_fine, ray_samples_pdf)
 

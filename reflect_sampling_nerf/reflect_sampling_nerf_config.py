@@ -38,7 +38,7 @@ reflect_sampling_nerf = MethodSpecification(
                 eval_num_rays_per_batch=1024,
             ),
             model=ReflectSamplingNeRFModelConfig(
-                eval_num_rays_per_chunk=1 << 15,
+                eval_num_rays_per_chunk=1 << 12,
             ),
         ),
         optimizers={
