@@ -81,10 +81,10 @@ class ReflectSamplingNeRFNerfField(Field):
 
         self.field_output_tint = RGBFieldHead(self.mlp_base.get_out_dim(), activation=None)
 
-        self.mlp_bottleneck = FieldHead(out_dim=self.mlp_base.get_out_dim(), field_head_name="bottleneck", in_dim=self.mlp_base.get_out_dim(), activation=None)
+        self.mlp_bottleneck = FieldHead(out_dim=self.mlp_base.get_out_dim(), field_head_name="bottleneck", in_dim=self.mlp_base.get_out_dim(), activation=nn.ReLU())
         
         self.mlp_low = MLP(
-            in_dim=self.direction_encoding.get_out_dim()+self.mlp_bottleneck.get_out_dim(),
+            in_dim=self.direction_encoding.get_out_dim()+1+self.mlp_bottleneck.get_out_dim(),
             num_layers=low_mlp_num_layers,
             layer_width=low_mlp_layer_width,
             out_activation=nn.ReLU()
@@ -195,10 +195,14 @@ class ReflectSamplingNeRFNerfField(Field):
         return outputs
     
     def get_low(
-        self, directions:Tensor, bottleneck:Tensor, roughness:Tensor
+        self, directions:Tensor, n_dot_d: Tensor, embedding:Tensor, roughness:Tensor
     ) ->Tensor:
-        encoded_dir = self.direction_encoding(directions, roughness)
-        mlp_out = self.mlp_low(torch.cat([encoded_dir, bottleneck], dim=-1))
+        encoded_dir = self.direction_encoding(directions)
+        for l in range(self.direction_encoding.levels):
+            begin = l**2
+            end = (l+1)**2
+            encoded_dir[...,begin:end]*=torch.exp(-roughness*0.5*l*(l+2))
+        mlp_out = self.mlp_low(torch.cat([encoded_dir, n_dot_d, embedding], dim=-1))
         outputs = self.field_output_low(mlp_out)
         return outputs
     
@@ -221,7 +225,7 @@ class ReflectSamplingNeRFNerfField(Field):
     def get_normalized(self, embedding: Tensor) -> Tuple[Tensor, Tensor]:
         diff = self.get_diff(embedding)
         tint = self.get_tint(embedding)
-        norm = diff + tint + 1e-1
+        norm = diff + tint + 1e-2
         diff = diff/norm
         tint = tint/norm
         return diff, tint
