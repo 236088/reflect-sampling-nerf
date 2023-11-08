@@ -45,9 +45,9 @@ class ReflectSamplingNeRFNerfField(Field):
         spatial_distortion: Optional[SpatialDistortion] = None,
         density_bias: float = 0.5,
         density_reflect_bias: float = 0.0,
-        roughness_bias: float = -1.0,
+        roughness_bias: float = 0.0,
         diff_bias:float=0.0,
-        tint_bias:float=1.0,
+        tint_bias:float=0.0,
         padding: float = 0.01,
     ) -> None:
         super().__init__()
@@ -89,7 +89,7 @@ class ReflectSamplingNeRFNerfField(Field):
         self.mlp_bottleneck = FieldHead(out_dim=self.mlp_base.get_out_dim(), field_head_name="bottleneck", in_dim=self.mlp_base.get_out_dim(), activation=None)
         
         self.mlp_low = MLP(
-            in_dim=self.direction_encoding.get_out_dim()+1+self.mlp_bottleneck.get_out_dim(),
+            in_dim=self.direction_encoding.get_out_dim()+self.mlp_bottleneck.get_out_dim(),
             num_layers=low_mlp_num_layers,
             layer_width=low_mlp_layer_width,
             out_activation=nn.ReLU()
@@ -177,21 +177,21 @@ class ReflectSamplingNeRFNerfField(Field):
         self, embedding:Tensor
     ) -> Tensor:
         outputs = self.field_output_roughness(embedding)
-        outputs = self.softplus(outputs + self.roughness_bias)
+        outputs = self.sigmoid(outputs + self.roughness_bias)
         return outputs
 
     def get_diff(
         self, embedding:Tensor
     ) -> Tensor:
         outputs = self.field_output_diff(embedding)
-        outputs = self.softplus(outputs + self.diff_bias)
+        outputs = self.sigmoid(outputs + self.diff_bias)
         return outputs
 
     def get_tint(
         self, embedding:Tensor
     ) -> Tensor:
         outputs = self.field_output_tint(embedding)
-        outputs = self.softplus(outputs + self.tint_bias)
+        outputs = self.sigmoid(outputs + self.tint_bias)
         return outputs
 
     def get_bottleneck(
@@ -201,14 +201,10 @@ class ReflectSamplingNeRFNerfField(Field):
         return outputs
     
     def get_low(
-        self, directions:Tensor, n_dot_d: Tensor, embedding:Tensor, roughness:Tensor
+        self, directions:Tensor, embedding:Tensor
     ) ->Tensor:
         encoded_dir = self.direction_encoding(directions)
-        for l in range(self.direction_encoding.levels):
-            begin = l**2
-            end = (l+1)**2
-            encoded_dir[...,begin:end]*=torch.exp(-roughness*0.5*l*(l+1))
-        mlp_out = self.mlp_low(torch.cat([encoded_dir, n_dot_d, embedding], dim=-1))
+        mlp_out = self.mlp_low(torch.cat([encoded_dir, embedding], dim=-1))
         outputs = self.field_output_low(mlp_out)
         return outputs
     
@@ -221,20 +217,23 @@ class ReflectSamplingNeRFNerfField(Field):
         diff = self.get_diff(embedding)
         return diff
 
-    
+    def get_normalize(
+        self, embedding:Tensor
+    ) -> Tensor:
+        diff = self.field_output_diff(embedding)
+        diff = self.softplus(diff + self.diff_bias)
+        tint = self.field_output_tint(embedding)
+        tint = self.softplus(tint + self.tint_bias)
+        norm = diff+tint+1e-1
+        return diff/norm, tint/norm
+        
+        
     def get_reflection(self, directions:Tensor, normals:Tensor) -> Tuple[Tensor, Tensor]:
         n_dot_d = torch.sum(directions*normals, dim=-1, keepdim=True)
         reflections = directions - 2*n_dot_d*normals
         reflections = torch.nn.functional.normalize(reflections, dim=-1)
         return reflections, n_dot_d
     
-    def get_normalized(self, embedding: Tensor) -> Tuple[Tensor, Tensor]:
-        diff = self.get_diff(embedding)
-        tint = self.get_tint(embedding)
-        norm = diff + tint + 1e-2
-        diff = diff/norm
-        tint = tint/norm
-        return diff, tint
     
     def get_padding(self, inputs: Tensor) -> Tensor:
         outputs = (1 + 2*self.padding)*inputs - self.padding
