@@ -48,7 +48,7 @@ reflect_sampling_nerf = MethodSpecification(
                 "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.0001, max_steps=200000),
             },
             "fields": {
-                "optimizer": RAdamOptimizerConfig(lr=1e-2, eps=1e-15),
+                "optimizer": RAdamOptimizerConfig(lr=1e-3, eps=1e-15),
                 "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=50000),
             },
             "camera_opt": {
