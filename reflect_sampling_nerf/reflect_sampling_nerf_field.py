@@ -44,10 +44,11 @@ class ReflectSamplingNeRFNerfField(Field):
         head_mlp_layer_width: int = 128,
         spatial_distortion: Optional[SpatialDistortion] = None,
         density_bias: float = 0.5,
+        reflect_density_bias: float = 0.0,
         roughness_bias: float = -1.0,
         diff_bias:float=0.0,
         tint_bias:float=0.0,
-        padding: float = 0.01,
+        padding: float = 0.001,
     ) -> None:
         super().__init__()
         self.position_encoding = position_encoding
@@ -64,17 +65,14 @@ class ReflectSamplingNeRFNerfField(Field):
         )
         self.field_output_density = DensityFieldHead(in_dim=self.mlp_base.get_out_dim(), activation=None)
         self.density_bias = density_bias
+
+        self.field_output_reflect_density = DensityFieldHead(in_dim=self.mlp_base.get_out_dim(), activation=None)
+        self.reflect_density_bias = reflect_density_bias
         
         self.softplus = nn.Softplus()
         self.sigmoid = nn.Sigmoid()
         
-        self.mlp_low = MLP(
-            in_dim=self.mlp_base.get_out_dim(),
-            num_layers=head_mlp_num_layers,
-            layer_width=head_mlp_layer_width,
-            out_activation=nn.ReLU()
-        )
-        self.field_output_low = RGBFieldHead(self.mlp_low.get_out_dim())
+        self.field_output_low = RGBFieldHead(self.mlp_base.get_out_dim())
         
         self.mlp_mid = MLP(
             in_dim=self.direction_encoding.get_out_dim()+self.mlp_base.get_out_dim(),
@@ -84,40 +82,16 @@ class ReflectSamplingNeRFNerfField(Field):
         )
         self.field_output_mid = RGBFieldHead(self.mlp_mid.get_out_dim())
                 
-        self.mlp_normal = MLP(
-            in_dim=self.mlp_base.get_out_dim(),
-            num_layers=head_mlp_num_layers,
-            layer_width=head_mlp_layer_width,
-            out_activation=nn.ReLU()
-        )
-        self.field_output_normals = PredNormalsFieldHead(in_dim=self.mlp_normal.get_out_dim(), activation=None)
+        self.field_output_normals = PredNormalsFieldHead(in_dim=self.mlp_base.get_out_dim(), activation=None)
         
-        self.mlp_roughness = MLP(
-            in_dim=self.mlp_base.get_out_dim(),
-            num_layers=head_mlp_num_layers,
-            layer_width=head_mlp_layer_width,
-            out_activation=nn.ReLU()
-        )      
-        self.field_output_roughness = FieldHead(out_dim=1, field_head_name="roughness", in_dim=self.mlp_roughness.get_out_dim(), activation=None)
+        self.field_output_roughness = FieldHead(out_dim=1, field_head_name="roughness", in_dim=self.mlp_base.get_out_dim(), activation=None)
         self.roughness_bias = roughness_bias
 
 
-        self.mlp_diff = MLP(
-            in_dim=self.mlp_base.get_out_dim(),
-            num_layers=head_mlp_num_layers,
-            layer_width=head_mlp_layer_width,
-            out_activation=nn.ReLU()
-        )
-        self.field_output_diff = RGBFieldHead(self.mlp_diff.get_out_dim(), activation=None)
+        self.field_output_diff = RGBFieldHead(self.mlp_base.get_out_dim(), activation=None)
         self.diff_bias = diff_bias
 
-        self.mlp_tint = MLP(
-            in_dim=self.mlp_base.get_out_dim(),
-            num_layers=head_mlp_num_layers,
-            layer_width=head_mlp_layer_width,
-            out_activation=nn.ReLU()
-        )
-        self.field_output_tint = RGBFieldHead(self.mlp_tint.get_out_dim(), activation=None)
+        self.field_output_tint = RGBFieldHead(self.mlp_base.get_out_dim(), activation=None)
         self.tint_bias = tint_bias
         
     
@@ -175,13 +149,20 @@ class ReflectSamplingNeRFNerfField(Field):
             self._density_before_activation=density
         density = self.softplus(density + self.density_bias)
         return density, mlp_out
-        
+    
+    def get_reflect_density(
+        self, mean:Tensor, cov:Tensor
+    ) -> Tuple[Tensor, Tensor]:
+        encoded_xyz = self.position_encoding(mean, covs=cov)
+        mlp_out = self.mlp_base(encoded_xyz)
+        density = self.field_output_reflect_density(mlp_out)
+        density = self.softplus(density + self.reflect_density_bias)
+        return density, mlp_out   
     
     def get_pred_normals(
         self, embedding:Tensor
     ) -> Tensor:
-        outputs = self.mlp_normal(embedding)
-        outputs = -self.field_output_normals(outputs)
+        outputs = -self.field_output_normals(embedding)
         outputs = nn.functional.normalize(outputs, dim=-1)
         return outputs
     
@@ -192,15 +173,13 @@ class ReflectSamplingNeRFNerfField(Field):
     def get_raw_roughness(
         self, embedding:Tensor
     ) -> Tensor:
-        outputs = self.mlp_roughness(embedding)
-        outputs = self.field_output_roughness(outputs)
+        outputs = self.field_output_roughness(embedding)
         return outputs
 
     def get_low(
         self, embedding:Tensor
     ) ->Tensor:
-        outputs = self.mlp_low(embedding)
-        outputs = self.field_output_low(outputs)
+        outputs = self.field_output_low(embedding)
         return outputs
         
     def get_mid(
@@ -214,16 +193,14 @@ class ReflectSamplingNeRFNerfField(Field):
     def get_diff(
         self, embedding:Tensor
     ) -> Tensor:
-        outputs = self.mlp_diff(embedding)
-        outputs = self.field_output_diff(outputs)
+        outputs = self.field_output_diff(embedding)
         outputs = self.softplus(outputs + self.diff_bias)
         return outputs
 
     def get_tint(
         self, embedding:Tensor
     ) -> Tensor:
-        outputs = self.mlp_tint(embedding)
-        outputs = self.field_output_tint(outputs)
+        outputs = self.field_output_tint(embedding)
         outputs = self.softplus(outputs + self.tint_bias)
         return outputs
     
