@@ -40,14 +40,13 @@ class ReflectSamplingNeRFNerfField(Field):
         base_mlp_num_layers: int = 8,
         base_mlp_layer_width: int = 256,
         skip_connections: Tuple[int] = (4,),
-        low_mlp_num_layers: int = 1,
-        low_mlp_layer_width: int = 128,
+        head_mlp_num_layers: int = 1,
+        head_mlp_layer_width: int = 128,
         spatial_distortion: Optional[SpatialDistortion] = None,
         density_bias: float = 0.5,
-        density_reflect_bias: float = 0.0,
         roughness_bias: float = -1.0,
         diff_bias:float=0.0,
-        tint_bias:float=1.0,
+        tint_bias:float=0.0,
         padding: float = 0.01,
     ) -> None:
         super().__init__()
@@ -65,36 +64,61 @@ class ReflectSamplingNeRFNerfField(Field):
         )
         self.field_output_density = DensityFieldHead(in_dim=self.mlp_base.get_out_dim(), activation=None)
         self.density_bias = density_bias
-
-        self.field_output_reflect_density = DensityFieldHead(in_dim=self.mlp_base.get_out_dim(), activation=None)
-        self.density_reflect_bias = density_reflect_bias
         
-        self.field_output_normals = PredNormalsFieldHead(in_dim=self.mlp_base.get_out_dim(), activation=None)
-
-        self.field_output_roughness = FieldHead(out_dim=1, field_head_name="roughness", in_dim=self.mlp_base.get_out_dim(), activation=None)
-        self.roughness_bias = roughness_bias
-        
-
         self.softplus = nn.Softplus()
         self.sigmoid = nn.Sigmoid()
-
-
-        
-        self.field_output_diff = RGBFieldHead(self.mlp_base.get_out_dim(), activation=None)
-        self.diff_bias = diff_bias
-
-        self.field_output_tint = RGBFieldHead(self.mlp_base.get_out_dim(), activation=None)
-        self.tint_bias = tint_bias
-
-        self.mlp_bottleneck = FieldHead(out_dim=self.mlp_base.get_out_dim(), field_head_name="bottleneck", in_dim=self.mlp_base.get_out_dim(), activation=None)
         
         self.mlp_low = MLP(
-            in_dim=self.direction_encoding.get_out_dim()+1+self.mlp_bottleneck.get_out_dim(),
-            num_layers=low_mlp_num_layers,
-            layer_width=low_mlp_layer_width,
+            in_dim=self.mlp_base.get_out_dim(),
+            num_layers=head_mlp_num_layers,
+            layer_width=head_mlp_layer_width,
             out_activation=nn.ReLU()
         )
         self.field_output_low = RGBFieldHead(self.mlp_low.get_out_dim())
+        
+        self.mlp_mid = MLP(
+            in_dim=self.direction_encoding.get_out_dim()+self.mlp_base.get_out_dim(),
+            num_layers=head_mlp_num_layers,
+            layer_width=head_mlp_layer_width,
+            out_activation=nn.ReLU()
+        )
+        self.field_output_mid = RGBFieldHead(self.mlp_mid.get_out_dim())
+                
+        self.mlp_normal = MLP(
+            in_dim=self.mlp_base.get_out_dim(),
+            num_layers=head_mlp_num_layers,
+            layer_width=head_mlp_layer_width,
+            out_activation=nn.ReLU()
+        )
+        self.field_output_normals = PredNormalsFieldHead(in_dim=self.mlp_normal.get_out_dim(), activation=None)
+        
+        self.mlp_roughness = MLP(
+            in_dim=self.mlp_base.get_out_dim(),
+            num_layers=head_mlp_num_layers,
+            layer_width=head_mlp_layer_width,
+            out_activation=nn.ReLU()
+        )      
+        self.field_output_roughness = FieldHead(out_dim=1, field_head_name="roughness", in_dim=self.mlp_roughness.get_out_dim(), activation=None)
+        self.roughness_bias = roughness_bias
+
+
+        self.mlp_diff = MLP(
+            in_dim=self.mlp_base.get_out_dim(),
+            num_layers=head_mlp_num_layers,
+            layer_width=head_mlp_layer_width,
+            out_activation=nn.ReLU()
+        )
+        self.field_output_diff = RGBFieldHead(self.mlp_diff.get_out_dim(), activation=None)
+        self.diff_bias = diff_bias
+
+        self.mlp_tint = MLP(
+            in_dim=self.mlp_base.get_out_dim(),
+            num_layers=head_mlp_num_layers,
+            layer_width=head_mlp_layer_width,
+            out_activation=nn.ReLU()
+        )
+        self.field_output_tint = RGBFieldHead(self.mlp_tint.get_out_dim(), activation=None)
+        self.tint_bias = tint_bias
         
     
 
@@ -152,65 +176,57 @@ class ReflectSamplingNeRFNerfField(Field):
         density = self.softplus(density + self.density_bias)
         return density, mlp_out
         
-    def get_reflect_density(
-        self, mean:Tensor, cov:Tensor
-    ) -> Tuple[Tensor, Tensor]:
-        encoded_xyz = self.position_encoding(mean, covs=cov)
-        mlp_out = self.mlp_base(encoded_xyz)
-        density = self.field_output_reflect_density(mlp_out)
-        density = self.softplus(density + self.density_reflect_bias)
-        return density, mlp_out
     
     def get_pred_normals(
         self, embedding:Tensor
     ) -> Tensor:
-        normals = -self.field_output_normals(embedding)
-        normals = nn.functional.normalize(normals, dim=-1)
-        return normals
+        outputs = self.mlp_normal(embedding)
+        outputs = -self.field_output_normals(outputs)
+        outputs = nn.functional.normalize(outputs, dim=-1)
+        return outputs
     
     def get_normals(self) -> Tensor:
         return super().get_normals()
 
-
     '''exp(-softplus(x))=sigmoid(-x)'''
-    def get_roughness(
+    def get_raw_roughness(
         self, embedding:Tensor
     ) -> Tensor:
-        outputs = self.field_output_roughness(embedding)
-        outputs = self.softplus(outputs + self.roughness_bias)
+        outputs = self.mlp_roughness(embedding)
+        outputs = self.field_output_roughness(outputs)
+        return outputs
+
+    def get_low(
+        self, embedding:Tensor
+    ) ->Tensor:
+        outputs = self.mlp_low(embedding)
+        outputs = self.field_output_low(outputs)
+        return outputs
+        
+    def get_mid(
+        self, directions:Tensor, embedding:Tensor, roughness:Tensor
+    ) ->Tensor:
+        encoded_dir = self.direction_encoding(directions, roughness)
+        mlp_out = self.mlp_mid(torch.cat([encoded_dir, embedding], dim=-1))
+        outputs = self.field_output_mid(mlp_out)
         return outputs
 
     def get_diff(
         self, embedding:Tensor
     ) -> Tensor:
-        outputs = self.field_output_diff(embedding)
+        outputs = self.mlp_diff(embedding)
+        outputs = self.field_output_diff(outputs)
         outputs = self.softplus(outputs + self.diff_bias)
         return outputs
 
     def get_tint(
         self, embedding:Tensor
     ) -> Tensor:
-        outputs = self.field_output_tint(embedding)
+        outputs = self.mlp_tint(embedding)
+        outputs = self.field_output_tint(outputs)
         outputs = self.softplus(outputs + self.tint_bias)
         return outputs
-
-    def get_bottleneck(
-        self, embedding: Tensor
-    ) -> Tensor:
-        outputs = self.mlp_bottleneck(embedding)
-        return outputs
     
-    def get_low(
-        self, directions:Tensor, n_dot_d: Tensor, embedding:Tensor, roughness:Tensor
-    ) ->Tensor:
-        encoded_dir = self.direction_encoding(directions)
-        for l in range(self.direction_encoding.levels):
-            begin = l**2
-            end = (l+1)**2
-            encoded_dir[...,begin:end]*=torch.exp(-roughness*0.5*l*(l+1))
-        mlp_out = self.mlp_low(torch.cat([encoded_dir, n_dot_d, embedding], dim=-1))
-        outputs = self.field_output_low(mlp_out)
-        return outputs
     
     
     def get_inf_color(
@@ -218,9 +234,8 @@ class ReflectSamplingNeRFNerfField(Field):
     ) ->Tensor:
         mean, cov = self.get_contract_inf(directions, sqradius)
         _, embedding = self.get_density(mean, cov)
-        diff = self.get_diff(embedding)
-        return diff
-
+        low = self.get_low(embedding)
+        return low
     
     def get_reflection(self, directions:Tensor, normals:Tensor) -> Tuple[Tensor, Tensor]:
         n_dot_d = torch.sum(directions*normals, dim=-1, keepdim=True)
@@ -231,7 +246,7 @@ class ReflectSamplingNeRFNerfField(Field):
     def get_normalized(self, embedding: Tensor) -> Tuple[Tensor, Tensor]:
         diff = self.get_diff(embedding)
         tint = self.get_tint(embedding)
-        norm = diff + tint + 1e-2
+        norm = diff + tint + 1e-1
         diff = diff/norm
         tint = tint/norm
         return diff, tint
