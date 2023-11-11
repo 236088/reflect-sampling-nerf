@@ -42,23 +42,23 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
     https://github.com/google-research/multinerf/blob/main/configs/blender_refnerf.gin
     """
 
-    num_coarse_samples: int = 64
+    num_coarse_samples: int = 128
     """Number of samples in coarse field evaluation"""
     num_importance_samples: int = 128
     """Number of samples in fine field evaluation"""
     
     num_reflect_coarse_samples: int = 64
     """Number of samples in coarse field evaluation"""
-    num_reflect_importance_samples: int = 128
+    num_reflect_importance_samples: int = 64
     """Number of samples in fine field evaluation"""
     
     loss_coefficients: Dict[str, float] = to_immutable_dict({
-        "low_loss_coarse": 1e-1,
-        "low_loss_fine": 1e-1,
+        "low_loss_coarse": 3e-2,
+        "low_loss_fine": 3e-2,
         "mid_loss_coarse": 1e-1,
         "mid_loss_fine": 1e-1,
-        "low_loss_reflect_coarse": 1.0,
-        "low_loss_reflect_fine": 1.0,
+        "low_loss_reflect_coarse": 3e-1,
+        "low_loss_reflect_fine": 3e-1,
         "mid_loss_reflect_coarse": 1.0,
         "mid_loss_reflect_fine": 1.0,
         "predicted_normal_loss_coarse": 3e-5,
@@ -167,7 +167,7 @@ class ReflectSamplingNeRFModel(Model):
         diff_outputs_coarse, tint_outputs_coarse  = self.field.get_normalized(embedding_coarse)
         
         raw_roughness_outputs_coarse = self.field.get_raw_roughness(embedding_coarse)
-        mid_outputs_coarse = self.field.get_mid(ray_samples_uniform.frustums.directions, embedding_coarse, raw_roughness_outputs_coarse, True)
+        mid_outputs_coarse = self.field.get_mid(reflections_coarse, n_dot_d_coarse, embedding_coarse, raw_roughness_outputs_coarse, True)
         mid_coarse = self.renderer_rgb(diff_outputs_coarse+tint_outputs_coarse*mid_outputs_coarse, weights_coarse)
         
         
@@ -199,13 +199,17 @@ class ReflectSamplingNeRFModel(Model):
         
         raw_roughness_outputs_fine = self.field.get_raw_roughness(embedding_fine)
         
-        mid_outputs_fine = self.field.get_mid(ray_samples_pdf.frustums.directions, embedding_fine, raw_roughness_outputs_fine, True)
+        mid_outputs_fine = self.field.get_mid(reflections_fine, n_dot_d_fine, embedding_fine, raw_roughness_outputs_fine, True)
                 
         diff_outputs_fine, tint_outputs_fine = self.field.get_normalized(embedding_fine)
         mid_fine = self.renderer_rgb(diff_outputs_fine + tint_outputs_fine*mid_outputs_fine, weights_fine)
 
         mask = (accumulation_fine>1e-2).reshape(-1)
         print(mask[mask].shape)
+        
+
+        diff_fine = self.renderer_rgb(diff_outputs_fine, weights_fine)
+        tint_fine = self.renderer_factor(tint_outputs_fine, weights_fine)
 
         
         
@@ -230,13 +234,11 @@ class ReflectSamplingNeRFModel(Model):
             "normals_fine": normals_outputs_fine.detach(),
             "n_dot_d_coarse": n_dot_d_coarse,
             "n_dot_d_fine": n_dot_d_fine,
+            "diff":diff_fine,
+            "tint":tint_fine
         }
         if not mask.any():
             return outputs
-        
-
-        diff_fine = self.renderer_rgb(diff_outputs_fine, weights_fine)
-        tint_fine = self.renderer_factor(tint_outputs_fine, weights_fine)
         
         pred_normals_fine = self.renderer_normals(pred_normals_outputs_fine, weights_fine)
         roughness_outputs_fine = self.field.sigmoid(raw_roughness_outputs_fine)
@@ -286,9 +288,13 @@ class ReflectSamplingNeRFModel(Model):
         low_outputs_reflect_coarse = self.field.get_low(embedding_reflect_coarse)
         low_reflect_coarse = self.renderer_rgb(low_outputs_reflect_coarse, weights_reflect_coarse, background_color=background_color)
         
-        diff_outputs_reflect_coarse, tint_outputs_reflect_coarse = self.field.get_normalized(embedding_reflect_coarse)
+        pred_normals_outputs_reflect_coarse = self.field.get_pred_normals(embedding_reflect_coarse)
+        reflections_reflect_coarse, n_dot_d_reflect_coarse = self.field.get_reflection(ray_samples_reciprocal.frustums.directions, pred_normals_outputs_reflect_coarse)
+        
         raw_roughness_outputs_reflect_coarse = self.field.get_raw_roughness(embedding_reflect_coarse)
-        mid_outputs_reflect_coarse = self.field.get_mid(ray_samples_reciprocal.frustums.directions, embedding_reflect_coarse, raw_roughness_outputs_reflect_coarse, True)
+        mid_outputs_reflect_coarse = self.field.get_mid(reflections_reflect_coarse, n_dot_d_reflect_coarse, embedding_reflect_coarse, raw_roughness_outputs_reflect_coarse, True)
+        
+        diff_outputs_reflect_coarse, tint_outputs_reflect_coarse = self.field.get_normalized(embedding_reflect_coarse)
         mid_reflect_coarse = self.renderer_reflect(diff_outputs_reflect_coarse+tint_outputs_reflect_coarse*mid_outputs_reflect_coarse, weights_reflect_coarse, background_color=background_color)
         
         outputs["low_reflect_coarse"][mask, :] = diff_fine[mask, :] + tint_fine[mask, :] * low_reflect_coarse
@@ -306,9 +312,13 @@ class ReflectSamplingNeRFModel(Model):
         low_outputs_reflect_fine = self.field.get_low(embedding_reflect_fine)
         low_reflect_fine = self.renderer_rgb(low_outputs_reflect_fine, weights_reflect_fine, background_color=background_color)
         
-        diff_outputs_reflect_fine, tint_outputs_reflect_fine = self.field.get_normalized(embedding_reflect_fine)
+        pred_normals_outputs_reflect_fine = self.field.get_pred_normals(embedding_reflect_fine)
+        reflections_reflect_fine, n_dot_d_reflect_fine = self.field.get_reflection(ray_samples_reciprocal.frustums.directions, pred_normals_outputs_reflect_fine)
+        
         raw_roughness_outputs_reflect_fine = self.field.get_raw_roughness(embedding_reflect_fine)
-        mid_outputs_reflect_fine = self.field.get_mid(ray_samples_recflect_pdf.frustums.directions, embedding_reflect_fine, raw_roughness_outputs_reflect_fine, True)
+        mid_outputs_reflect_fine = self.field.get_mid(reflections_reflect_fine, n_dot_d_reflect_fine, embedding_reflect_fine, raw_roughness_outputs_reflect_fine, True)
+        
+        diff_outputs_reflect_fine, tint_outputs_reflect_fine = self.field.get_normalized(embedding_reflect_fine)
         mid_reflect_fine = self.renderer_reflect(diff_outputs_reflect_fine+tint_outputs_reflect_fine*mid_outputs_reflect_fine, weights_reflect_fine, background_color=background_color)
 
         outputs["low_reflect_fine"][mask, :] = diff_fine[mask, :] + tint_fine[mask, :] * low_reflect_fine
