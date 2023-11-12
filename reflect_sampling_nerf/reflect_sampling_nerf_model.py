@@ -53,8 +53,6 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
     """Number of samples in fine field evaluation"""
     
     loss_coefficients: Dict[str, float] = to_immutable_dict({
-        "low_loss_coarse": 1e-1,
-        "low_loss_fine": 1e-1,
         "mid_loss_coarse": 3e-1,
         "mid_loss_fine": 3e-1,
         "low_loss_reflect_coarse": 1.0,
@@ -95,7 +93,7 @@ class ReflectSamplingNeRFModel(Model):
 
         # setting up fields
         position_encoding = NeRFEncoding(
-            in_dim=3, num_frequencies=16, min_freq_exp=0.0, max_freq_exp=16.0, include_input=True
+            in_dim=3, num_frequencies=10, min_freq_exp=0.0, max_freq_exp=10.0, include_input=True
         )
         direction_encoding = IntegratedSHEncoding()
 
@@ -153,9 +151,6 @@ class ReflectSamplingNeRFModel(Model):
         weights_coarse = ray_samples_uniform.get_weights(density_outputs_coarse)
         accumulation_coarse = self.renderer_accumulation(weights_coarse)
         depth_coarse = self.renderer_depth(weights_coarse, ray_samples_uniform)
-        
-        low_outputs_coarse = self.field.get_low(embedding_coarse)
-        low_coarse = self.renderer_rgb(low_outputs_coarse, weights_coarse)
 
         pred_normals_outputs_coarse = self.field.get_pred_normals(embedding_coarse)
         if self.training:
@@ -187,9 +182,6 @@ class ReflectSamplingNeRFModel(Model):
         accumulation_fine = self.renderer_accumulation(weights_fine)
         depth_fine = self.renderer_depth(weights_fine, ray_samples_pdf)
         
-        low_outputs_fine = self.field.get_low(embedding_fine)
-        low_fine = self.renderer_rgb(low_outputs_fine, weights_fine)
-        
         pred_normals_outputs_fine = self.field.get_pred_normals(embedding_fine)
         if self.training:
             normals_outputs_fine = self.field.get_normals()
@@ -214,12 +206,10 @@ class ReflectSamplingNeRFModel(Model):
         
         
         outputs = {
-            "low_coarse": low_coarse,
-            "low_fine": low_fine,
             "mid_coarse": mid_coarse,
             "mid_fine": mid_fine,
-            "low_reflect_coarse": self.background_color.to(low_coarse.device).repeat(low_coarse.shape[:-1]+(1,)),
-            "low_reflect_fine": self.background_color.to(low_fine.device).repeat(low_fine.shape[:-1]+(1,)),
+            "low_reflect_coarse": self.background_color.to(mid_coarse.device).repeat(mid_coarse.shape[:-1]+(1,)),
+            "low_reflect_fine": self.background_color.to(mid_fine.device).repeat(mid_fine.shape[:-1]+(1,)),
             "mid_reflect_coarse": self.background_color.to(mid_coarse.device).repeat(mid_coarse.shape[:-1]+(1,)),
             "mid_reflect_fine": self.background_color.to(mid_fine.device).repeat(mid_fine.shape[:-1]+(1,)),
             "accumulation_coarse": accumulation_coarse,
@@ -343,16 +333,6 @@ class ReflectSamplingNeRFModel(Model):
 
     def get_loss_dict(self, outputs, batch, metrics_dict=None):
         image = batch["image"].to(self.device)
-        low_pred_coarse, low_image_coarse = self.renderer_rgb.blend_background_for_loss_computation(
-            pred_image=outputs["low_coarse"],
-            pred_accumulation=outputs["accumulation_coarse"],
-            gt_image=image,
-        )
-        low_pred_fine, low_image_fine = self.renderer_rgb.blend_background_for_loss_computation(
-            pred_image=outputs["low_fine"],
-            pred_accumulation=outputs["accumulation_fine"],
-            gt_image=image,
-        )
         mid_pred_coarse, mid_image_coarse = self.renderer_rgb.blend_background_for_loss_computation(
             pred_image=outputs["mid_coarse"],
             pred_accumulation=outputs["accumulation_coarse"],
@@ -383,9 +363,6 @@ class ReflectSamplingNeRFModel(Model):
             pred_accumulation=outputs["accumulation_fine"],
             gt_image=image,
         )
-        
-        low_loss_coarse = self.rgb_loss(low_image_coarse, low_pred_coarse)
-        low_loss_fine = self.rgb_loss(low_image_fine, low_pred_fine)
         mid_loss_coarse = self.rgb_loss(mid_image_coarse, mid_pred_coarse)
         mid_loss_fine = self.rgb_loss(mid_image_fine, mid_pred_fine)
         low_loss_reflect_coarse = self.rgb_loss(low_image_reflect_coarse, low_pred_reflect_coarse)
@@ -401,16 +378,13 @@ class ReflectSamplingNeRFModel(Model):
         
         print(mid_loss_reflect_fine.item(), '>' if mid_loss_reflect_fine.item() > low_loss_reflect_fine.item() else '<',
               low_loss_reflect_fine.item(), '>' if low_loss_reflect_fine.item() > mid_loss_fine.item() else '<',
-              mid_loss_fine.item(), '>' if mid_loss_fine.item() > low_loss_fine.item() else '<', 
-              low_loss_fine.item())
+              mid_loss_fine.item())
         print(predicted_normal_loss_fine.item(), orientation_loss_fine.item())
 
-        if mid_loss_reflect_fine.isnan().any() and low_loss_reflect_fine.isnan().any() and mid_loss_fine.isnan().any() and low_loss_fine.isnan().any() and predicted_normal_loss_fine.isnan().any() and orientation_loss_fine.isnan().any():
+        if mid_loss_reflect_fine.isnan().any() and low_loss_reflect_fine.isnan().any() and mid_loss_fine.isnan().any() and predicted_normal_loss_fine.isnan().any() and orientation_loss_fine.isnan().any():
             torch.autograd.anomaly_mode.set_detect_anomaly(True)
 
         loss_dict = {
-            "low_loss_coarse": low_loss_coarse,
-            "low_loss_fine": low_loss_fine,
             "mid_loss_coarse": mid_loss_coarse,
             "mid_loss_fine": mid_loss_fine,
             "low_loss_reflect_coarse": low_loss_reflect_coarse,
