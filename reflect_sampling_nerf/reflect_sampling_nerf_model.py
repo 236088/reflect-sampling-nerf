@@ -53,12 +53,12 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
     """Number of samples in fine field evaluation"""
     
     loss_coefficients: Dict[str, float] = to_immutable_dict({
-        "low_loss_coarse": 3e-2,
-        "low_loss_fine": 3e-2,
-        "mid_loss_coarse": 1e-1,
-        "mid_loss_fine": 1e-1,
-        "low_loss_reflect_coarse": 3e-1,
-        "low_loss_reflect_fine": 3e-1,
+        "low_loss_coarse": 1e-1,
+        "low_loss_fine": 1e-1,
+        "mid_loss_coarse": 3e-1,
+        "mid_loss_fine": 3e-1,
+        "low_loss_reflect_coarse": 1.0,
+        "low_loss_reflect_fine": 1.0,
         "mid_loss_reflect_coarse": 1.0,
         "mid_loss_reflect_fine": 1.0,
         "predicted_normal_loss_coarse": 3e-5,
@@ -109,8 +109,8 @@ class ReflectSamplingNeRFModel(Model):
         self.sampler_pdf = PDFSampler(num_samples=self.config.num_importance_samples, include_original=False)
         self.sampler_reciprocal = ReciprocalSampler(num_samples=self.config.num_reflect_coarse_samples, tan=0.25)
         self.sampler_reflect_pdf = PDFSampler(num_samples=self.config.num_reflect_importance_samples, include_original=False)
-        self.near = 2**-8
         self.far = 2**8
+        self.near = 2**-8
         
         # renderers
         self.background_color = colors.WHITE
@@ -431,8 +431,8 @@ class ReflectSamplingNeRFModel(Model):
         assert self.config.collider_params is not None, "mip-NeRF requires collider parameters to be set."
         image = batch["image"].to(outputs["rgb_coarse"].device)
         image = self.renderer_rgb.blend_background(image)
-        rgb_coarse = outputs["rgb_coarse"]
-        rgb_fine = outputs["rgb_reflect_fine"]
+        rgb_coarse = outputs["low_coarse"]
+        rgb_fine = outputs["mid_reflect_fine"]
         acc_coarse = colormaps.apply_colormap(outputs["accumulation_coarse"])
         acc_fine = colormaps.apply_colormap(outputs["accumulation_fine"])
 
