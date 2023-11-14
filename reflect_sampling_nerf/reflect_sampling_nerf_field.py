@@ -179,7 +179,7 @@ class ReflectSamplingNeRFNerfField(Field):
         self, embedding:Tensor, use_bottleneck:bool=True
     ) ->Tensor:
         embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
-        mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim()+1,), device=embedding.device), embedding], dim=-1))
+        mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim(),), device=embedding.device), torch.ones_like(embedding[...,0:1]), embedding], dim=-1))
         outputs = self.field_output_mid(mlp_out)
         return outputs
     

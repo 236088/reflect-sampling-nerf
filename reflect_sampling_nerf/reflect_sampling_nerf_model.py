@@ -161,7 +161,7 @@ class ReflectSamplingNeRFModel(Model):
         tint_outputs_coarse = self.field.get_tint(embedding_coarse)
         
         roughness_outputs_coarse = self.field.get_roughness(embedding_coarse)
-        outputs_coarse = self.field.get_low(embedding_coarse, True)
+        outputs_coarse = self.field.get_mid(reflections_coarse, n_dot_d_coarse, embedding_coarse, roughness_outputs_coarse, True)
         rgb_coarse = self.renderer_rgb(diff_outputs_coarse+tint_outputs_coarse*outputs_coarse, weights_coarse)
         rgb_coarse = torch.clip(rgb_coarse, 0.0, 1.0)
         
@@ -271,14 +271,14 @@ class ReflectSamplingNeRFModel(Model):
         
         mean_reflect_coarse, cov_reflect_coarse = self.field.get_blob(ray_samples_reciprocal)
         mean_reflect_coarse, cov_reflect_coarse = self.field.contract(mean_reflect_coarse, cov_reflect_coarse)
-        density_outputs_reflect_coarse, embedding_reflect_coarse = self.field.get_density(mean_reflect_coarse, cov_reflect_coarse)
+        density_outputs_reflect_coarse, embedding_reflect_coarse = self.field.get_reflect_density(mean_reflect_coarse, cov_reflect_coarse)
         weights_reflect_coarse = ray_samples_reciprocal.get_weights(density_outputs_reflect_coarse)
         
         pred_normals_outputs_reflect_coarse = self.field.get_pred_normals(embedding_reflect_coarse)
         reflections_reflect_coarse, n_dot_d_reflect_coarse = self.field.get_reflection(ray_samples_reciprocal.frustums.directions, pred_normals_outputs_reflect_coarse)
         
         roughness_outputs_reflect_coarse = self.field.get_roughness(embedding_reflect_coarse)
-        outputs_reflect_coarse = self.field.get_low(embedding_reflect_coarse, True)
+        outputs_reflect_coarse = self.field.get_mid(reflections_reflect_coarse, n_dot_d_reflect_coarse, embedding_reflect_coarse, roughness_outputs_reflect_coarse, True)
         
         diff_outputs_reflect_coarse = self.field.get_diff(embedding_reflect_coarse)
         tint_outputs_reflect_coarse = self.field.get_tint(embedding_reflect_coarse)
@@ -292,7 +292,7 @@ class ReflectSamplingNeRFModel(Model):
 
         mean_reflect_fine, cov_reflect_fine = self.field.get_blob(ray_samples_recflect_pdf)
         mean_reflect_fine, cov_reflect_fine = self.field.contract(mean_reflect_fine, cov_reflect_fine)
-        density_outputs_reflect_fine, embedding_reflect_fine = self.field.get_density(mean_reflect_fine, cov_reflect_fine)
+        density_outputs_reflect_fine, embedding_reflect_fine = self.field.get_reflect_density(mean_reflect_fine, cov_reflect_fine)
         weights_reflect_fine = ray_samples_recflect_pdf.get_weights(density_outputs_reflect_fine)
         
         pred_normals_outputs_reflect_fine = self.field.get_pred_normals(embedding_reflect_fine)
