@@ -91,7 +91,7 @@ class ReflectSamplingNeRFModel(Model):
 
         # setting up fields
         position_encoding = NeRFEncoding(
-            in_dim=3, num_frequencies=16, min_freq_exp=0.0, max_freq_exp=16.0, include_input=True
+            in_dim=3, num_frequencies=10, min_freq_exp=0.0, max_freq_exp=10.0, include_input=True
         )
         direction_encoding = IntegratedSHEncoding()
 
@@ -161,7 +161,7 @@ class ReflectSamplingNeRFModel(Model):
         tint_outputs_coarse = self.field.get_tint(embedding_coarse)
         
         roughness_outputs_coarse = self.field.get_roughness(embedding_coarse)
-        outputs_coarse = self.field.get_mid(reflections_coarse, n_dot_d_coarse, embedding_coarse, roughness_outputs_coarse, True)
+        outputs_coarse = self.field.get_low(embedding_coarse, True)
         rgb_coarse = self.renderer_rgb(diff_outputs_coarse+tint_outputs_coarse*outputs_coarse, weights_coarse)
         rgb_coarse = torch.clip(rgb_coarse, 0.0, 1.0)
         
@@ -278,7 +278,7 @@ class ReflectSamplingNeRFModel(Model):
         reflections_reflect_coarse, n_dot_d_reflect_coarse = self.field.get_reflection(ray_samples_reciprocal.frustums.directions, pred_normals_outputs_reflect_coarse)
         
         roughness_outputs_reflect_coarse = self.field.get_roughness(embedding_reflect_coarse)
-        outputs_reflect_coarse = self.field.get_mid(reflections_reflect_coarse, n_dot_d_reflect_coarse, embedding_reflect_coarse, roughness_outputs_reflect_coarse, True)
+        outputs_reflect_coarse = self.field.get_low(embedding_reflect_coarse, True)
         
         diff_outputs_reflect_coarse = self.field.get_diff(embedding_reflect_coarse)
         tint_outputs_reflect_coarse = self.field.get_tint(embedding_reflect_coarse)
