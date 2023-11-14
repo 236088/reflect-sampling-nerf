@@ -171,23 +171,17 @@ class ReflectSamplingNeRFNerfField(Field):
         return super().get_normals()
 
     '''exp(-softplus(x))=sigmoid(-x)'''
-    def get_raw_roughness(
+    def get_roughness(
         self, embedding:Tensor
     ) -> Tensor:
         outputs = self.field_output_roughness(embedding)
-        return outputs
-
-    def get_low(
-        self, embedding:Tensor
-    ) ->Tensor:
-        outputs = self.field_output_low(embedding)
+        outputs = self.softplus(outputs)
         return outputs
     
     
     def get_mid(
-        self, directions:Tensor, n_dot_d:Tensor, embedding:Tensor, raw_roughness:Tensor, use_bottleneck:bool=False
+        self, directions:Tensor, n_dot_d:Tensor, embedding:Tensor, roughness:Tensor, use_bottleneck:bool=True
     ) ->Tensor:
-        roughness = self.softplus(raw_roughness)
         encoded_dir = self.direction_encoding(directions.detach(), roughness)
         embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
         mlp_out = self.mlp_mid(torch.cat([encoded_dir, n_dot_d.detach(), embedding], dim=-1))
@@ -198,14 +192,14 @@ class ReflectSamplingNeRFNerfField(Field):
         self, embedding:Tensor
     ) -> Tensor:
         outputs = self.field_output_diff(embedding)
-        outputs = self.softplus(outputs + self.diff_bias)
+        outputs = self.sigmoid(outputs + self.diff_bias)
         return outputs
 
     def get_tint(
         self, embedding:Tensor
     ) -> Tensor:
         outputs = self.field_output_tint(embedding)
-        outputs = self.softplus(outputs + self.tint_bias)
+        outputs = self.sigmoid(outputs + self.tint_bias)
         return outputs
     
     
@@ -215,22 +209,16 @@ class ReflectSamplingNeRFNerfField(Field):
     ) ->Tensor:
         mean, cov = self.get_contract_inf(directions, sqradius)
         _, embedding = self.get_density(mean, cov)
-        low = self.get_low(embedding)
-        return low
+        embedding = self.field_output_bottleneck(embedding)
+        mlp_out = self.mlp_mid(torch.cat([torch.zeros(directions.shape[:-1]+(self.direction_encoding.get_out_dim()+1,), device=directions.device), embedding], dim=-1))
+        outputs = self.field_output_mid(mlp_out)
+        return outputs
     
     def get_reflection(self, directions:Tensor, normals:Tensor) -> Tuple[Tensor, Tensor]:
         n_dot_d = torch.sum(directions*normals, dim=-1, keepdim=True)
         reflections = directions - 2*n_dot_d*normals
         reflections = torch.nn.functional.normalize(reflections, dim=-1)
         return reflections, n_dot_d
-    
-    def get_normalized(self, embedding: Tensor) -> Tuple[Tensor, Tensor]:
-        diff = self.get_diff(embedding)
-        tint = self.get_tint(embedding)
-        norm = diff + tint + 1e-1
-        diff = diff/norm
-        tint = tint/norm
-        return diff, tint
     
     def get_padding(self, inputs: Tensor) -> Tensor:
         outputs = (1 + 2*self.padding)*inputs - self.padding
