@@ -161,8 +161,8 @@ class ReflectSamplingNeRFModel(Model):
         tint_outputs_coarse = self.field.get_tint(embedding_coarse)
         
         roughness_outputs_coarse = self.field.get_roughness(embedding_coarse)
-        outputs_coarse = self.field.get_mid(reflections_coarse, n_dot_d_coarse, embedding_coarse, roughness_outputs_coarse, True)
-        rgb_coarse = self.renderer_rgb(diff_outputs_coarse+tint_outputs_coarse*outputs_coarse, weights_coarse)
+        outputs_coarse = self.field.get_mid(reflections_coarse.detach(), n_dot_d_coarse.detach(), embedding_coarse, roughness_outputs_coarse.detach(), True)
+        rgb_coarse = self.renderer_rgb(diff_outputs_coarse.detach()+tint_outputs_coarse.detach()*outputs_coarse, weights_coarse)
         rgb_coarse = torch.clip(rgb_coarse, 0.0, 1.0)
         
         # diff_coarse = self.renderer_rgb(diff_outputs_coarse, weights_coarse)
@@ -191,11 +191,11 @@ class ReflectSamplingNeRFModel(Model):
         
         roughness_outputs_fine = self.field.get_roughness(embedding_fine)
         
-        outputs_fine = self.field.get_mid(reflections_fine, n_dot_d_fine, embedding_fine, roughness_outputs_fine, True)
+        outputs_fine = self.field.get_mid(reflections_fine.detach(), n_dot_d_fine.detach(), embedding_fine, roughness_outputs_fine.detach(), True)
                 
         diff_outputs_fine = self.field.get_diff(embedding_fine) 
         tint_outputs_fine = self.field.get_tint(embedding_fine)
-        rgb_fine = self.renderer_rgb(diff_outputs_fine + tint_outputs_fine*outputs_fine, weights_fine)
+        rgb_fine = self.renderer_rgb(diff_outputs_fine.detach() + tint_outputs_fine.detach()*outputs_fine, weights_fine)
         rgb_fine = torch.clip(rgb_fine, 0.0, 1.0)
 
         mask = (accumulation_fine>1e-2).reshape(-1)
@@ -203,16 +203,14 @@ class ReflectSamplingNeRFModel(Model):
         
 
         diff_fine = self.renderer_rgb(diff_outputs_fine, weights_fine)
-        # diff_fine = diff_fine.detach()
         tint_fine = self.renderer_factor(tint_outputs_fine, weights_fine)
-        # tint_fine = tint_fine.detach()
         
         
         outputs = {
             "rgb_coarse": rgb_coarse,
             "rgb_fine": rgb_fine,
-            "reflect_coarse": rgb_coarse,
-            "reflect_fine": rgb_fine,
+            "reflect_coarse": self.background_color.to(rgb_fine.device).expand(rgb_fine.shape)*(1.0-accumulation_fine),
+            "reflect_fine": self.background_color.to(rgb_fine.device).expand(rgb_fine.shape)*(1.0-accumulation_fine),
             "accumulation_coarse": accumulation_coarse,
             "accumulation_fine": accumulation_fine,
             "depth_coarse": depth_coarse,
@@ -234,7 +232,6 @@ class ReflectSamplingNeRFModel(Model):
         pred_normals_fine = self.renderer_normals(pred_normals_outputs_fine, weights_fine)
         roughness_fine = self.renderer_roughness(roughness_outputs_fine, weights_fine)
         roughness = 1-torch.exp(-roughness_fine)
-        roughness = roughness.detach()
 
         q=torch.tensor([0.1,0.3,0.5,0.7,0.9])
         print("roughness :",torch.quantile(roughness[mask,:].cpu(), q=q).detach().numpy())
@@ -282,6 +279,7 @@ class ReflectSamplingNeRFModel(Model):
         
         diff_outputs_reflect_coarse = self.field.get_diff(embedding_reflect_coarse)
         tint_outputs_reflect_coarse = self.field.get_tint(embedding_reflect_coarse)
+
         reflect_coarse = self.renderer_reflect(diff_outputs_reflect_coarse+tint_outputs_reflect_coarse*outputs_reflect_coarse, weights_reflect_coarse, background_color=background_color)
 
         outputs["reflect_coarse"][mask, :] = diff_fine[mask, :] + tint_fine[mask, :] * reflect_coarse
