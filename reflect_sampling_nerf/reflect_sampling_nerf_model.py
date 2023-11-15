@@ -42,12 +42,12 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
     https://github.com/google-research/multinerf/blob/main/configs/blender_refnerf.gin
     """
 
-    num_coarse_samples: int = 64
+    num_coarse_samples: int = 128
     """Number of samples in rgb_coarse field evaluation"""
     num_importance_samples: int = 128
     """Number of samples in rgb_fine field evaluation"""
     
-    num_reflect_coarse_samples: int = 64
+    num_reflect_coarse_samples: int = 128
     """Number of samples in rgb_coarse field evaluation"""
     num_reflect_importance_samples: int = 128
     """Number of samples in rgb_fine field evaluation"""
@@ -106,7 +106,7 @@ class ReflectSamplingNeRFModel(Model):
         self.sampler_reciprocal = ReciprocalSampler(num_samples=self.config.num_reflect_coarse_samples, tan=0.25)
         self.sampler_reflect_pdf = PDFSampler(num_samples=self.config.num_reflect_importance_samples, include_original=False)
         self.far = 2**8
-        self.near = 2**-8
+        self.near = 1.0/32
         
         # renderers
         self.background_color = colors.WHITE
@@ -203,16 +203,16 @@ class ReflectSamplingNeRFModel(Model):
         
 
         diff_fine = self.renderer_rgb(diff_outputs_fine, weights_fine)
-        diff_fine = diff_fine.detach()
+        # diff_fine = diff_fine.detach()
         tint_fine = self.renderer_factor(tint_outputs_fine, weights_fine)
-        tint_fine = tint_fine.detach()
+        # tint_fine = tint_fine.detach()
         
         
         outputs = {
             "rgb_coarse": rgb_coarse,
             "rgb_fine": rgb_fine,
-            "reflect_coarse": self.background_color.to(rgb_coarse.device).repeat(rgb_coarse.shape[:-1]+(1,)),
-            "reflect_fine": self.background_color.to(rgb_fine.device).repeat(rgb_fine.shape[:-1]+(1,)),
+            "reflect_coarse": rgb_coarse,
+            "reflect_fine": rgb_fine,
             "accumulation_coarse": accumulation_coarse,
             "accumulation_fine": accumulation_fine,
             "depth_coarse": depth_coarse,
@@ -235,10 +235,11 @@ class ReflectSamplingNeRFModel(Model):
         roughness_fine = self.renderer_roughness(roughness_outputs_fine, weights_fine)
         roughness = 1-torch.exp(-roughness_fine)
         roughness = roughness.detach()
-      
-        print("roughness :",torch.quantile(roughness[mask,:].cpu(), q=torch.linspace(0.1,0.9,5)).detach().numpy())
-        print("diffuse   :", torch.quantile(torch.sum((diff_fine[mask,:]).cpu(), dim=-1), q=torch.linspace(0,1,5)).detach().numpy())
-        print("tint      :", torch.quantile(torch.sum((tint_fine[mask,:]).cpu(), dim=-1), q=torch.linspace(0,1,5)).detach().numpy())
+
+        q=torch.tensor([0.1,0.3,0.5,0.7,0.9])
+        print("roughness :",torch.quantile(roughness[mask,:].cpu(), q=q).detach().numpy())
+        print("diffuse   :", torch.quantile(torch.sum((diff_fine[mask,:]).cpu(), dim=-1), q=q).detach().numpy())
+        print("tint      :", torch.quantile(torch.sum((tint_fine[mask,:]).cpu(), dim=-1), q=q).detach().numpy())
                 
 
 
@@ -268,10 +269,9 @@ class ReflectSamplingNeRFModel(Model):
         background_color = self.field.get_inf_color(reflections, sqradius)
 
         ray_samples_reciprocal = self.sampler_reciprocal(reflect_ray_bundle)
-        
         mean_reflect_coarse, cov_reflect_coarse = self.field.get_blob(ray_samples_reciprocal)
         mean_reflect_coarse, cov_reflect_coarse = self.field.contract(mean_reflect_coarse, cov_reflect_coarse)
-        density_outputs_reflect_coarse, embedding_reflect_coarse = self.field.get_reflect_density(mean_reflect_coarse, cov_reflect_coarse)
+        density_outputs_reflect_coarse, embedding_reflect_coarse = self.field.get_density(mean_reflect_coarse, cov_reflect_coarse)
         weights_reflect_coarse = ray_samples_reciprocal.get_weights(density_outputs_reflect_coarse)
         
         pred_normals_outputs_reflect_coarse = self.field.get_pred_normals(embedding_reflect_coarse)
@@ -285,14 +285,14 @@ class ReflectSamplingNeRFModel(Model):
         reflect_coarse = self.renderer_reflect(diff_outputs_reflect_coarse+tint_outputs_reflect_coarse*outputs_reflect_coarse, weights_reflect_coarse, background_color=background_color)
 
         outputs["reflect_coarse"][mask, :] = diff_fine[mask, :] + tint_fine[mask, :] * reflect_coarse
-        outputs["reflect_coarse"] = torch.clip(outputs["reflect_coarse"], 0.0, 1.0)
+        outputs["reflect_coarse"][mask, :] = torch.clip(outputs["reflect_coarse"][mask, :], 0.0, 1.0)
 
 
         ray_samples_recflect_pdf = self.sampler_reflect_pdf(reflect_ray_bundle, ray_samples_reciprocal, weights_reflect_coarse)
 
         mean_reflect_fine, cov_reflect_fine = self.field.get_blob(ray_samples_recflect_pdf)
         mean_reflect_fine, cov_reflect_fine = self.field.contract(mean_reflect_fine, cov_reflect_fine)
-        density_outputs_reflect_fine, embedding_reflect_fine = self.field.get_reflect_density(mean_reflect_fine, cov_reflect_fine)
+        density_outputs_reflect_fine, embedding_reflect_fine = self.field.get_density(mean_reflect_fine, cov_reflect_fine)
         weights_reflect_fine = ray_samples_recflect_pdf.get_weights(density_outputs_reflect_fine)
         
         pred_normals_outputs_reflect_fine = self.field.get_pred_normals(embedding_reflect_fine)
@@ -306,7 +306,7 @@ class ReflectSamplingNeRFModel(Model):
         reflect_fine = self.renderer_reflect(diff_outputs_reflect_fine+tint_outputs_reflect_fine*outputs_reflect_fine, weights_reflect_fine, background_color=background_color)
 
         outputs["reflect_fine"][mask, :] = diff_fine[mask, :] + tint_fine[mask, :] * reflect_fine
-        outputs["reflect_fine"] = torch.clip(outputs["reflect_fine"], 0.0, 1.0)
+        outputs["reflect_fine"][mask, :] = torch.clip(outputs["reflect_fine"][mask, :], 0.0, 1.0)
 
         return outputs
 
