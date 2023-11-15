@@ -53,8 +53,8 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
     """Number of samples in rgb_fine field evaluation"""
     
     loss_coefficients: Dict[str, float] = to_immutable_dict({
-        "loss_coarse": 1.0,
-        "loss_fine": 1.0,
+        "loss_coarse": 5e-1,
+        "loss_fine": 5e-1,
         "loss_reflect_coarse": 1.0,
         "loss_reflect_fine": 1.0,
         "predicted_normal_loss_coarse": 3e-5,
@@ -161,7 +161,7 @@ class ReflectSamplingNeRFModel(Model):
         tint_outputs_coarse = self.field.get_tint(embedding_coarse)
         
         roughness_outputs_coarse = self.field.get_roughness(embedding_coarse)
-        outputs_coarse = self.field.get_mid(reflections_coarse.detach(), n_dot_d_coarse.detach(), embedding_coarse, roughness_outputs_coarse.detach(), True)
+        outputs_coarse = self.field.get_mid(reflections_coarse.detach(), n_dot_d_coarse.detach(), embedding_coarse, roughness_outputs_coarse, True)
         rgb_coarse = self.renderer_rgb(diff_outputs_coarse.detach()+tint_outputs_coarse.detach()*outputs_coarse, weights_coarse)
         rgb_coarse = torch.clip(rgb_coarse, 0.0, 1.0)
         
@@ -191,7 +191,7 @@ class ReflectSamplingNeRFModel(Model):
         
         roughness_outputs_fine = self.field.get_roughness(embedding_fine)
         
-        outputs_fine = self.field.get_mid(reflections_fine.detach(), n_dot_d_fine.detach(), embedding_fine, roughness_outputs_fine.detach(), True)
+        outputs_fine = self.field.get_mid(reflections_fine.detach(), n_dot_d_fine.detach(), embedding_fine, roughness_outputs_fine, True)
                 
         diff_outputs_fine = self.field.get_diff(embedding_fine) 
         tint_outputs_fine = self.field.get_tint(embedding_fine)
