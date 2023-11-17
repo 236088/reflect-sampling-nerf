@@ -63,9 +63,6 @@ class ReflectSamplingNeRFNerfField(Field):
         )
         self.field_output_density = DensityFieldHead(in_dim=self.mlp_base.get_out_dim(), activation=None)
         self.density_bias = density_bias
-
-        self.field_output_reflect_density = DensityFieldHead(in_dim=self.mlp_base.get_out_dim(), activation=None)
-        self.reflect_density_bias = reflect_density_bias
         
         self.softplus = nn.Softplus()
         self.sigmoid = nn.Sigmoid()
@@ -75,7 +72,7 @@ class ReflectSamplingNeRFNerfField(Field):
         self.field_output_bottleneck = FieldHead(out_dim=self.mlp_base.get_out_dim(), field_head_name="bottleneck", in_dim=self.mlp_base.get_out_dim(), activation=None)
         
         self.mlp_mid = MLP(
-            in_dim=self.direction_encoding.get_out_dim()+1+self.mlp_base.get_out_dim(),
+            in_dim=self.direction_encoding.get_out_dim()+self.mlp_base.get_out_dim(),
             num_layers=head_mlp_num_layers,
             layer_width=head_mlp_layer_width,
             out_activation=nn.ReLU()
@@ -134,27 +131,21 @@ class ReflectSamplingNeRFNerfField(Field):
         return mean, cov
         
     def get_density(
-        self, mean:Tensor, cov:Tensor, requires_density_grad:bool = False
+        self, mean:Tensor, cov:Tensor=None, requires_density_grad:bool = False
     ) -> Tuple[Tensor, Tensor]:
         if requires_density_grad and self.training:
             mean.requires_grad = True
             self._sample_locations = mean
-        encoded_xyz = self.position_encoding(mean, covs=cov)
+        if cov is not None:
+            encoded_xyz = self.position_encoding(mean, covs=cov)
+        else:
+            encoded_xyz = self.position_encoding(mean)
         mlp_out = self.mlp_base(encoded_xyz)
         density = self.field_output_density(mlp_out)
         if requires_density_grad and self.training:
             self._density_before_activation=density
         density = self.softplus(density + self.density_bias)
         return density, mlp_out
-    
-    def get_reflect_density(
-        self, mean:Tensor, cov:Tensor
-    ) -> Tuple[Tensor, Tensor]:
-        encoded_xyz = self.position_encoding(mean, covs=cov)
-        mlp_out = self.mlp_base(encoded_xyz)
-        density = self.field_output_reflect_density(mlp_out)
-        density = self.softplus(density + self.reflect_density_bias)
-        return density, mlp_out   
     
     def get_pred_normals(
         self, embedding:Tensor
@@ -171,7 +162,7 @@ class ReflectSamplingNeRFNerfField(Field):
         self, embedding:Tensor
     ) -> Tensor:
         outputs = self.field_output_roughness(embedding)
-        outputs = self.softplus(outputs)
+        outputs = self.sigmoid(outputs)
         return outputs
     
     
@@ -179,16 +170,17 @@ class ReflectSamplingNeRFNerfField(Field):
         self, embedding:Tensor, use_bottleneck:bool=True
     ) ->Tensor:
         # embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
-        outputs = self.field_output_low(embedding)
+        # mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim(),), device=embedding.device), embedding], dim=-1))
+        outputs = self.field_output_low(embedding )
         return outputs
     
     
     def get_mid(
-        self, directions:Tensor, n_dot_d:Tensor, embedding:Tensor, roughness:Tensor, use_bottleneck:bool=True
+        self, directions:Tensor, embedding:Tensor, use_bottleneck:bool=True
     ) ->Tensor:
-        encoded_dir = self.direction_encoding(directions, roughness)
+        encoded_dir = self.direction_encoding(directions)
         embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
-        mlp_out = self.mlp_mid(torch.cat([encoded_dir, n_dot_d, embedding], dim=-1))
+        mlp_out = self.mlp_mid(torch.cat([encoded_dir, embedding], dim=-1))
         outputs = self.field_output_mid(mlp_out)
         return outputs
 
@@ -222,7 +214,7 @@ class ReflectSamplingNeRFNerfField(Field):
         reflections = directions - 2*n_dot_d*normals
         reflections = torch.nn.functional.normalize(reflections, dim=-1)
         return reflections, n_dot_d
-    
+        
     def get_padding(self, inputs: Tensor) -> Tensor:
         outputs = (1 + 2*self.padding)*inputs - self.padding
         outputs = torch.clip(inputs, 0.0, 1.0)
