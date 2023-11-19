@@ -121,14 +121,6 @@ class ReflectSamplingNeRFNerfField(Field):
         else:
             return mean_contract, cov_contract
     
-    def get_contract_inf(
-        self, directions:Tensor, sqradius:Tensor
-    ) -> Tuple[Tensor, Tensor]:
-        outer = directions[...,:,None]*directions[...,None,:]
-        eyes = torch.eye(directions.shape[-1], device=directions.device).expand(outer.shape)
-        mean = 2*directions
-        cov = 0.6*sqradius[...,None]*(eyes-outer)
-        return mean, cov
         
     def get_density(
         self, mean:Tensor, cov:Tensor=None, requires_density_grad:bool = False
@@ -171,17 +163,18 @@ class ReflectSamplingNeRFNerfField(Field):
     ) ->Tensor:
         # embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
         # mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim(),), device=embedding.device), embedding], dim=-1))
-        outputs = self.field_output_low(embedding )
+        outputs = self.field_output_low(embedding)
         return outputs
     
     
     def get_mid(
         self, directions:Tensor, embedding:Tensor, use_bottleneck:bool=True
     ) ->Tensor:
-        encoded_dir = self.direction_encoding(directions)
-        embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
-        mlp_out = self.mlp_mid(torch.cat([encoded_dir, embedding], dim=-1))
-        outputs = self.field_output_mid(mlp_out)
+        # encoded_dir = self.direction_encoding(directions)
+        # embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
+        # mlp_out = self.mlp_mid(torch.cat([encoded_dir, embedding], dim=-1))
+        # outputs = self.field_output_mid(mlp_out)
+        outputs = self.field_output_low(embedding)
         return outputs
 
     def get_diff(
@@ -203,10 +196,13 @@ class ReflectSamplingNeRFNerfField(Field):
     def get_inf_color(
         self, directions:Tensor, sqradius:Tensor
     ) ->Tensor:
-        mean, cov = self.get_contract_inf(directions, sqradius)
+        outer = directions[...,:,None]*directions[...,None,:]
+        eyes = torch.eye(directions.shape[-1], device=directions.device).expand(outer.shape)
+        mean = 2*directions
+        cov = 0.6*sqradius[...,None]*(eyes-outer)
         _, embedding = self.get_density(mean, cov)
         embedding = self.field_output_bottleneck(embedding)
-        outputs = self.get_low(embedding)
+        outputs = self.get_mid(directions, embedding, True)
         return outputs
     
     def get_reflection(self, directions:Tensor, normals:Tensor) -> Tuple[Tensor, Tensor]:
