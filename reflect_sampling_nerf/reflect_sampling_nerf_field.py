@@ -84,9 +84,9 @@ class ReflectSamplingNeRFNerfField(Field):
         self.field_output_roughness = FieldHead(out_dim=1, field_head_name="roughness", in_dim=self.mlp_base.get_out_dim(), activation=None)
         self.roughness_bias = roughness_bias
 
-        self.field_output_diff = RGBFieldHead(self.mlp_base.get_out_dim(), activation=None)
+        self.field_output_diff = RGBFieldHead(self.mlp_base.get_out_dim())
 
-        self.field_output_tint = RGBFieldHead(self.mlp_base.get_out_dim(), activation=None)
+        self.field_output_tint = RGBFieldHead(self.mlp_base.get_out_dim())
         
     
 
@@ -159,26 +159,26 @@ class ReflectSamplingNeRFNerfField(Field):
 
     '''exp(-softplus(x))=sigmoid(-x)'''
     def get_roughness(
-        self, embedding:Tensor
+        self, embedding:Tensor, activation:Optional[nn.Module]=nn.Sigmoid()
     ) -> Tensor:
         outputs = self.field_output_roughness(embedding)
-        outputs = self.sigmoid(outputs)
+        outputs = activation(outputs)
         return outputs
     
     
     def get_low(
         self, embedding:Tensor, use_bottleneck:bool=True
     ) ->Tensor:
-        # embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
-        # mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim(),), device=embedding.device), embedding], dim=-1))
-        outputs = self.field_output_low(embedding )
+        embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
+        mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim(),), device=embedding.device), embedding], dim=-1))
+        outputs = self.field_output_mid(mlp_out)
         return outputs
     
     
     def get_mid(
-        self, directions:Tensor, embedding:Tensor, use_bottleneck:bool=True
+        self, directions:Tensor, roughness:Tensor, embedding:Tensor, use_bottleneck:bool=True
     ) ->Tensor:
-        encoded_dir = self.direction_encoding(directions)
+        encoded_dir = self.direction_encoding(directions, roughness)
         embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
         mlp_out = self.mlp_mid(torch.cat([encoded_dir, embedding], dim=-1))
         outputs = self.field_output_mid(mlp_out)
@@ -188,14 +188,12 @@ class ReflectSamplingNeRFNerfField(Field):
         self, embedding:Tensor
     ) -> Tensor:
         outputs = self.field_output_diff(embedding)
-        outputs = self.sigmoid(outputs)
         return outputs
 
     def get_tint(
         self, embedding:Tensor
     ) -> Tensor:
         outputs = self.field_output_tint(embedding)
-        outputs = self.sigmoid(outputs)
         return outputs
     
     
@@ -206,7 +204,8 @@ class ReflectSamplingNeRFNerfField(Field):
         mean, cov = self.get_contract_inf(directions, sqradius)
         _, embedding = self.get_density(mean, cov)
         embedding = self.field_output_bottleneck(embedding)
-        outputs = self.get_low(embedding)
+        mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim(),), device=embedding.device), embedding], dim=-1))
+        outputs = self.field_output_mid(mlp_out)
         return outputs
     
     def get_reflection(self, directions:Tensor, normals:Tensor) -> Tuple[Tensor, Tensor]:

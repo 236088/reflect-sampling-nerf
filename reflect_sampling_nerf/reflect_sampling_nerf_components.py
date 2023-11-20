@@ -131,6 +131,10 @@ class IntegratedSHEncoding(Encoding):
     '''
     exp(-softplus(x)*a)=exp(-softplus(x))**a=sigmoid(-x)**a
     '''
-    def forward(self, in_tensor: Float[Tensor, "*bs input_dim"]) -> Float[Tensor, "*bs output_dim"]:
+    def forward(self, in_tensor: Float[Tensor, "*bs input_dim"], roughness: Float[Tensor, "*bs 1"]=None) -> Float[Tensor, "*bs output_dim"]:
         outputs = self.pytorch_fwd(in_tensor)
+        outputs[...,0:3]*=torch.exp(-roughness)
+        outputs[...,3:8]*=torch.exp(-roughness*3)
+        outputs[...,8:17]*=torch.exp(-roughness*10)
+        outputs[...,17:34]*=torch.exp(-roughness*36)
         return outputs
