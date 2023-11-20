@@ -44,7 +44,7 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
     """
 
     num_coarse_samples: int = 128
-    """Number of samples in mid_rgb_coarse field evaluation"""
+    """Number of samples in coarse field evaluation"""
     num_importance_samples: int = 128
     """Number of samples in mid_rgb_fine field evaluation"""
     
@@ -98,7 +98,7 @@ class ReflectSamplingNeRFModel(Model):
         position_encoding = NeRFEncoding(
             in_dim=3, num_frequencies=10, min_freq_exp=0.0, max_freq_exp=10.0, include_input=True
         )
-        direction_encoding = IntegratedSHEncoding()
+        direction_encoding = SHEncoding()
 
         self.field = ReflectSamplingNeRFNerfField(
             position_encoding=position_encoding, 
@@ -296,8 +296,11 @@ class ReflectSamplingNeRFModel(Model):
         ray_samples_reciprocal = self.sampler_reciprocal(reflect_ray_bundle)
         mean_reflect_coarse, cov_reflect_coarse = self.field.get_blob(ray_samples_reciprocal)
         mean_reflect_coarse, cov_reflect_coarse = self.field.contract(mean_reflect_coarse, cov_reflect_coarse)
-        density_outputs_reflect_coarse, embedding_reflect_coarse = self.field.get_density(mean_reflect_coarse, cov_reflect_coarse)
+        density_outputs_reflect_coarse, embedding_reflect_coarse = self.field.get_reflect_density(mean_reflect_coarse, cov_reflect_coarse)
         weights_reflect_coarse = ray_samples_reciprocal.get_weights(density_outputs_reflect_coarse)
+                
+        bottleneck_reflect_coarse = self.field.get_bottleneck(embedding_reflect_coarse)
+        low_outputs_reflect_coarse = self.field.get_low(ray_samples_reciprocal.frustums.directions, bottleneck_reflect_coarse)
         
         diff_outputs_reflect_coarse = self.field.get_diff(embedding_reflect_coarse)
         tint_outputs_reflect_coarse = self.field.get_tint(embedding_reflect_coarse)

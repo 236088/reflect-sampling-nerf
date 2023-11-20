@@ -44,15 +44,12 @@ class ReflectSamplingNeRFNerfField(Field):
         head_mlp_layer_width: int = 128,
         spatial_distortion: Optional[SpatialDistortion] = None,
         density_bias: float = 0.5,
-        reflect_density_bias: float = 0.0,
         roughness_bias: float = -1.0,
-        padding: float = 0.001,
     ) -> None:
         super().__init__()
         self.position_encoding = position_encoding
         self.direction_encoding = direction_encoding
         self.spatial_distortion = spatial_distortion
-        self.padding = padding
 
         self.mlp_base = MLP(
             in_dim=self.position_encoding.get_out_dim(),
@@ -213,11 +210,6 @@ class ReflectSamplingNeRFNerfField(Field):
         reflections = directions - 2*n_dot_d*normals
         reflections = torch.nn.functional.normalize(reflections, dim=-1)
         return reflections, n_dot_d
-        
-    def get_padding(self, inputs: Tensor) -> Tensor:
-        outputs = (1 + 2*self.padding)*inputs - self.padding
-        outputs = torch.clip(inputs, 0.0, 1.0)
-        return outputs
        
     # TODO: Override any potential methods to implement your own field.
     # or subclass from base Field and define all mandatory methods.
