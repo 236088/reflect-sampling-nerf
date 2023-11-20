@@ -87,4 +87,5 @@ class ReflectSamplingNeRFPipeline(VanillaPipeline):
             self.model.config.loss_coefficients["predicted_normal_loss_fine"]=3e-4
             self.model.config.loss_coefficients["orientation_loss_coarse"]=1e-2
             self.model.config.loss_coefficients["orientation_loss_fine"]=1e-1
+                    
         return super().get_train_loss_dict(step)
