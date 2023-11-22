@@ -118,14 +118,6 @@ class ReflectSamplingNeRFNerfField(Field):
         else:
             return mean_contract, cov_contract
     
-    def get_contract_inf(
-        self, directions:Tensor, sqradius:Tensor
-    ) -> Tuple[Tensor, Tensor]:
-        outer = directions[...,:,None]*directions[...,None,:]
-        eyes = torch.eye(directions.shape[-1], device=directions.device).expand(outer.shape)
-        mean = 2*directions
-        cov = 0.6*sqradius[...,None]*(eyes-outer)
-        return mean, cov
         
     def get_density(
         self, mean:Tensor, cov:Tensor=None, requires_density_grad:bool = False
@@ -198,7 +190,10 @@ class ReflectSamplingNeRFNerfField(Field):
     def get_inf_color(
         self, directions:Tensor, sqradius:Tensor
     ) ->Tensor:
-        mean, cov = self.get_contract_inf(directions, sqradius)
+        outer = directions[...,:,None]*directions[...,None,:]
+        eyes = torch.eye(directions.shape[-1], device=directions.device).expand(outer.shape)
+        mean = 2*directions
+        cov = 0.6*sqradius[...,None]*(eyes-outer)
         _, embedding = self.get_density(mean, cov)
         embedding = self.field_output_bottleneck(embedding)
         mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim(),), device=embedding.device), embedding], dim=-1))

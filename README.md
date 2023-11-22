@@ -1,18 +1,15 @@
-# nerfstudio-method-template
-Template repository for creating and registering methods in Nerfstudio.
-
 ## File Structure
 We recommend the following file structure:
 
 ```
-├── my_method
+├── reflect_sampling_nerf
 │   ├── __init__.py
-│   ├── my_config.py
-│   ├── custom_pipeline.py [optional]
-│   ├── custom_model.py [optional]
-│   ├── custom_field.py [optional]
-│   ├── custom_datamanger.py [optional]
-│   ├── custom_dataparser.py [optional]
+│   ├── reflect_sampling_nerf_config.py
+│   ├── reflect_sampling_nerf_pipeline.py
+│   ├── reflect_sampling_nerf_model.py
+│   ├── reflect_sampling_nerf_field.py
+│   ├── reflect_sampling_nerf_datamanger.py
+│   ├── reflect_sampling_nerf_dataparser.py
 │   ├── ...
 ├── pyproject.toml
 ```
@@ -22,13 +19,13 @@ Ensure that nerfstudio has been installed according to the [instructions](https:
 
 ```
 conda activate nerfstudio
-cd nerfstudio-method-template/
+cd reflect-sampling-nerf/
 pip install -e .
 ns-install-cli
 ```
 
 ## Running the new method
-This repository creates a new Nerfstudio method named "method-template". To train with it, run the command:
+This repository creates a new Nerfstudio method named "reflect-sampling-nerf". To train with it, run the command:
 ```
-ns-train method-template --data [PATH]
+ns-train reflect-sampling-nerf --data [PATH]
 ```
