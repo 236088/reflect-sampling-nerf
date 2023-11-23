@@ -61,10 +61,6 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
         "orientation_loss_value": 1e-1,
         "interlevel_loss_value": 1.0,
         "distortion_loss_value": 1e-2,
-        "interlevel_normal_loss_value": 1.0,
-        "distortion_normal_loss_value": 1e-2,
-        "interlevel_reflect_loss_value": 1.0,
-        "distortion_reflect_loss_value": 1e-2,
         })
 
     enable_temporal_distortion: bool = False
@@ -179,11 +175,11 @@ class ReflectSamplingNeRFModel(Model):
         diff_outputs_fine = self.field.get_diff(embedding_fine) 
         tint_outputs_fine = self.field.get_tint(embedding_fine)
         
-        low_outputs_fine = self.field.get_low(embedding_fine, True)
+        # low_outputs_fine = self.field.get_low(embedding_fine, True)
         roughness_outputs_fine = self.field.get_roughness(embedding_fine, activation=nn.Softplus())
         mid_outputs_fine = self.field.get_mid(reflections_outputs_fine, n_dot_d_outputs_fine, roughness_outputs_fine, embedding_fine, True)
         
-        outputs_fine = diff_outputs_fine*low_outputs_fine+tint_outputs_fine*mid_outputs_fine
+        outputs_fine = diff_outputs_fine+tint_outputs_fine*mid_outputs_fine
         rgb_fine = self.renderer_rgb(outputs_fine, weights_fine)
         rgb_fine = torch.clip(rgb_fine, 0.0, 1.0)
 
@@ -215,10 +211,6 @@ class ReflectSamplingNeRFModel(Model):
             "depth_fine": depth_fine,
             "weights_list": [weights_coarse, weights_fine],
             "ray_samples_list": [ray_samples_uniform, ray_samples_pdf],
-            "weights_normal_list": [weights_coarse, weights_fine],
-            "ray_samples_normal_list": [ray_samples_uniform, ray_samples_pdf],
-            "weights_reflect_list": [weights_coarse, weights_fine],
-            "ray_samples_reflect_list": [ray_samples_uniform, ray_samples_pdf],
             "pred_normals_fine": pred_normals_outputs_fine,
             "normals_fine": normals_outputs_fine,
             "directions": ray_bundle.directions,
@@ -251,6 +243,7 @@ class ReflectSamplingNeRFModel(Model):
         sigma^2 = roughness^2*2*|direction*normal|
         sigma as radius
         '''
+        '''
         normal_ray_bundle = RayBundle(
             origins=origins,
             directions=pred_normals_fine[mask, :],
@@ -281,8 +274,8 @@ class ReflectSamplingNeRFModel(Model):
         mid_outputs_normal_fine = self.field.get_mid(reflections_outputs_normal_fine, n_dot_d_outputs_normal_fine, roughness_outputs_normal_fine, embedding_normal_fine, True)
         
         outputs_normal_fine = diff_outputs_normal_fine*low_outputs_normal_fine + tint_outputs_normal_fine*mid_outputs_normal_fine
-        normal_fine = self.renderer_reflect(outputs_normal_fine, weights_normal_fine)
-        
+        normal_fine = self.renderer_reflect(outputs_normal_fine, weights_normal_fine.detach())
+        '''
         
         
         reflect_ray_bundle = RayBundle(
@@ -310,26 +303,20 @@ class ReflectSamplingNeRFModel(Model):
         diff_outputs_reflect_fine = self.field.get_diff(embedding_reflect_fine) 
         tint_outputs_reflect_fine = self.field.get_tint(embedding_reflect_fine)
         
-        low_outputs_reflect_fine = self.field.get_low(embedding_reflect_fine, True)
+        # low_outputs_reflect_fine = self.field.get_low(embedding_reflect_fine, True)
         roughness_outputs_reflect_fine = self.field.get_roughness(embedding_reflect_fine, activation=nn.Softplus())
         mid_outputs_reflect_fine = self.field.get_mid(reflections_outputs_reflect_fine, n_dot_d_outputs_reflect_fine, roughness_outputs_reflect_fine, embedding_reflect_fine, True)
         
-        outputs_reflect_fine = diff_outputs_reflect_fine*low_outputs_reflect_fine + tint_outputs_reflect_fine*mid_outputs_reflect_fine
-        reflect_fine = self.renderer_reflect(outputs_reflect_fine, weights_reflect_fine)
+        outputs_reflect_fine = diff_outputs_reflect_fine + tint_outputs_reflect_fine*mid_outputs_reflect_fine
+        reflect_fine = self.renderer_reflect(outputs_reflect_fine, weights_reflect_fine.detach())
         
         
         
-        outputs["reflect_fine"][mask, :] = diff_fine[mask, :] * normal_fine + tint_fine[mask, :] * reflect_fine
+        outputs["reflect_fine"][mask, :] = diff_fine[mask, :] + tint_fine[mask, :] * reflect_fine
         outputs["reflect_fine"][mask, :] = torch.clip(outputs["reflect_fine"][mask, :], 0.0, 1.0)
         
         outputs["depth_reflect_fine"] = self.renderer_depth(weights_reflect_fine, ray_samples_reflect_pdf)
         print("depth :",torch.quantile(outputs["depth_reflect_fine"].cpu(), q=q).detach().numpy())
-        
-        outputs["weights_normal_list"] = [weights_normal_coarse, weights_normal_fine]
-        outputs["ray_samples_normal_list"] = [ray_samples_normal_lindisp, ray_samples_normal_pdf]
-        
-        outputs["weights_reflect_list"] = [weights_reflect_coarse, weights_reflect_fine]
-        outputs["ray_samples_reflect_list"] = [ray_samples_reflect_lindisp, ray_samples_reflect_pdf]
         
         return outputs
 
@@ -357,17 +344,9 @@ class ReflectSamplingNeRFModel(Model):
         interlevel_loss_value = interlevel_loss(outputs["weights_list"], outputs["ray_samples_list"])
         distortion_loss_value = distortion_loss(outputs["weights_list"], outputs["ray_samples_list"])
         
-        interlevel_normal_loss_value = interlevel_loss(outputs["weights_normal_list"], outputs["ray_samples_normal_list"])
-        distortion_normal_loss_value = distortion_loss(outputs["weights_normal_list"], outputs["ray_samples_normal_list"])
-        
-        interlevel_reflect_loss_value = interlevel_loss(outputs["weights_reflect_list"], outputs["ray_samples_reflect_list"])
-        distortion_reflect_loss_value = distortion_loss(outputs["weights_reflect_list"], outputs["ray_samples_reflect_list"])
-        
         print(loss_reflect_fine.item(), "<" if loss_reflect_fine.item()<loss_fine.item() else ">", loss_fine.item())
         print(pred_normal_loss_value.item(), orientation_loss_value.item())
         print(interlevel_loss_value.item(), distortion_loss_value.item())
-        print(interlevel_normal_loss_value.item(), distortion_normal_loss_value.item())
-        print(interlevel_reflect_loss_value.item(), distortion_reflect_loss_value.item())
 
         if loss_reflect_fine.isnan().any() and pred_normal_loss_value.isnan().any() and orientation_loss_value.isnan().any():
             torch.autograd.anomaly_mode.set_detect_anomaly(True)
@@ -379,10 +358,6 @@ class ReflectSamplingNeRFModel(Model):
             "orientation_loss_value": orientation_loss_value,
             "interlevel_loss_value": interlevel_loss_value,
             "distortion_loss_value": distortion_loss_value,
-            "interlevel_normal_loss_value": interlevel_normal_loss_value,
-            "distortion_normal_loss_value": distortion_normal_loss_value,
-            "interlevel_reflect_loss_value": interlevel_reflect_loss_value,
-            "distortion_reflect_loss_value": distortion_reflect_loss_value,
             }
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
         return loss_dict
