@@ -102,19 +102,16 @@ class ReflectSamplingNeRFNerfField(Field):
         base_mlp_num_layers: int = 8,
         base_mlp_layer_width: int = 256,
         skip_connections: Tuple[int] = (4,),
-        head_mlp_num_layers: int = 1,
-        head_mlp_layer_width: int = 256,
+        head_mlp_num_layers: int = 4,
+        head_mlp_layer_width: int = 128,
         spatial_distortion: Optional[SpatialDistortion] = None,
         density_bias: float = 0.5,
-        reflect_density_bias: float = 0.0,
         roughness_bias: float = -1.0,
-        padding: float = 0.001,
     ) -> None:
         super().__init__()
         self.position_encoding = position_encoding
         self.direction_encoding = direction_encoding
         self.spatial_distortion = spatial_distortion
-        self.padding = padding
 
         self.mlp_base = MLP(
             in_dim=self.position_encoding.get_out_dim(),
@@ -134,7 +131,7 @@ class ReflectSamplingNeRFNerfField(Field):
         self.field_output_bottleneck = FieldHead(out_dim=self.mlp_base.get_out_dim(), field_head_name="bottleneck", in_dim=self.mlp_base.get_out_dim(), activation=None)
         
         self.mlp_mid = MLP(
-            in_dim=self.direction_encoding.get_out_dim()+self.mlp_base.get_out_dim(),
+            in_dim=self.direction_encoding.get_out_dim()+1+self.mlp_base.get_out_dim(),
             num_layers=head_mlp_num_layers,
             layer_width=head_mlp_layer_width,
             out_activation=nn.ReLU()
@@ -160,15 +157,6 @@ class ReflectSamplingNeRFNerfField(Field):
             gaussian_samples = self.spatial_distortion(gaussian_samples)
         return gaussian_samples.mean, gaussian_samples.cov
     
-    
-    def get_contract_inf(
-        self, directions:Tensor, sqradius:Tensor
-    ) -> Tuple[Tensor, Tensor]:
-        outer = directions[...,:,None]*directions[...,None,:]
-        eyes = torch.eye(directions.shape[-1], device=directions.device).expand(outer.shape)
-        mean = 2*directions
-        cov = 0.6*sqradius[...,None]*(eyes-outer)
-        return mean, cov
         
     def get_density(
         self, mean:Tensor, cov:Tensor=None, requires_density_grad:bool = False
@@ -210,17 +198,17 @@ class ReflectSamplingNeRFNerfField(Field):
         self, embedding:Tensor, use_bottleneck:bool=True
     ) ->Tensor:
         embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
-        mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim(),), device=embedding.device), embedding], dim=-1))
+        mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim()+1,), device=embedding.device), embedding], dim=-1))
         outputs = self.field_output_mid(mlp_out)
         return outputs
     
     
     def get_mid(
-        self, directions:Tensor, roughness:Tensor, embedding:Tensor, use_bottleneck:bool=True
+        self, directions:Tensor, n_dot_d:Tensor, roughness:Tensor, embedding:Tensor, use_bottleneck:bool=True
     ) ->Tensor:
         encoded_dir = self.direction_encoding(directions, roughness)
         embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
-        mlp_out = self.mlp_mid(torch.cat([encoded_dir, embedding], dim=-1))
+        mlp_out = self.mlp_mid(torch.cat([encoded_dir, n_dot_d, embedding], dim=-1))
         outputs = self.field_output_mid(mlp_out)
         return outputs
     
@@ -236,28 +224,12 @@ class ReflectSamplingNeRFNerfField(Field):
         outputs = self.field_output_tint(embedding)
         return outputs
     
-    
-    
-    def get_inf_color(
-        self, directions:Tensor, sqradius:Tensor
-    ) ->Tensor:
-        mean, cov = self.get_contract_inf(directions, sqradius)
-        _, embedding = self.get_density(mean, cov)
-        embedding = self.field_output_bottleneck(embedding)
-        mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim(),), device=embedding.device), embedding], dim=-1))
-        outputs = self.field_output_mid(mlp_out)
-        return outputs
-    
     def get_reflection(self, directions:Tensor, normals:Tensor) -> Tuple[Tensor, Tensor]:
         n_dot_d = torch.sum(directions*normals, dim=-1, keepdim=True)
         reflections = directions - 2*n_dot_d*normals
         reflections = torch.nn.functional.normalize(reflections, dim=-1)
         return reflections, n_dot_d
-        
-    def get_padding(self, inputs: Tensor) -> Tensor:
-        outputs = (1 + 2*self.padding)*inputs - self.padding
-        outputs = torch.clip(inputs, 0.0, 1.0)
-        return outputs
        
     # TODO: Override any potential methods to implement your own field.
     # or subclass from base Field and define all mandatory methods.
+    

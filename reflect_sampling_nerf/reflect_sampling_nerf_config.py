@@ -29,7 +29,7 @@ reflect_sampling_nerf = MethodSpecification(
         method_name="reflect-sampling-nerf",  # TODO: rename to your own model
         steps_per_eval_batch=100,
         steps_per_save=1000,
-        max_num_iterations=100000,
+        max_num_iterations=200000,
         mixed_precision=False,
         pipeline=ReflectSamplingNeRFPipelineConfig(
             datamanager=ReflectSamplingNeRFDataManagerConfig(
@@ -44,12 +44,12 @@ reflect_sampling_nerf = MethodSpecification(
         optimizers={
             # TODO: consider changing optimizers depending on your custom method
             "proposal_networks": {
-                "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
-                "scheduler": ExponentialDecaySchedulerConfig(lr_final=0.0001, max_steps=200000),
+                "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-6),
+                "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-5, warmup_steps=1000, max_steps=100000),
             },
             "fields": {
-                "optimizer": RAdamOptimizerConfig(lr=1e-3, eps=1e-15),
-                "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, max_steps=50000),
+                "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-6),
+                "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-5, warmup_steps=1000, max_steps=100000),
             },
             "camera_opt": {
                 "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),
