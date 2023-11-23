@@ -255,7 +255,7 @@ class ReflectSamplingNeRFModel(Model):
             origins=origins,
             directions=pred_normals_fine[mask, :],
             pixel_area=torch.pi*2*torch.ones_like(sqradius),
-            nears=torch.zeros_like(ray_bundle.nears[mask, :])*self.near,
+            nears=torch.rand_like(ray_bundle.nears[mask, :])*self.near,
             fars=torch.ones_like(ray_bundle.fars[mask, :])*self.far
         )
 
@@ -289,7 +289,7 @@ class ReflectSamplingNeRFModel(Model):
             origins=origins,
             directions=reflections,
             pixel_area=torch.pi*sqradius,
-            nears=torch.zeros_like(ray_bundle.nears[mask, :])*self.near,
+            nears=torch.rand_like(ray_bundle.nears[mask, :])*self.near,
             fars=torch.ones_like(ray_bundle.fars[mask, :])*self.far
         )
 
