@@ -33,7 +33,7 @@ from nerfstudio.model_components.renderers import (
 from nerfstudio.utils import colormaps, colors, misc
 
 from nerfstudio.models.base_model import Model, ModelConfig  # for custom Model
-from reflect_sampling_nerf.reflect_sampling_nerf_field import ReflectSamplingNeRFPropField, ReflectSamplingNeRFNerfField
+from reflect_sampling_nerf.reflect_sampling_nerf_field import ReflectSamplingNeRFPropField, ReflectSamplingNeRFEnvironmentField, ReflectSamplingNeRFNerfField
 from reflect_sampling_nerf.reflect_sampling_nerf_components import IntegratedSHEncoding, PolyhedronFFEncoding
 
 @dataclass
@@ -101,6 +101,10 @@ class ReflectSamplingNeRFModel(Model):
             spatial_distortion=spatial_distortion
         )
 
+        self.env = ReflectSamplingNeRFEnvironmentField(
+            position_encoding=position_encoding
+        )
+
         self.field = ReflectSamplingNeRFNerfField(
             position_encoding=position_encoding, 
             direction_encoding=direction_encoding,
@@ -122,7 +126,7 @@ class ReflectSamplingNeRFModel(Model):
         self.renderer_normals = NormalsRenderer()
         self.renderer_roughness = SemanticRenderer()
         self.renderer_factor = RGBRenderer()
-        self.renderer_reflect = RGBRenderer(background_color="last_sample")
+        self.renderer_reflect = RGBRenderer()
 
         # losses
         self.rgb_loss = MSELoss()
@@ -136,7 +140,7 @@ class ReflectSamplingNeRFModel(Model):
         param_groups = {}
         if self.field is None:
             raise ValueError("populate_fields() must be called before get_param_groups")
-        param_groups["fields"] = list(self.prop.parameters()) + list(self.field.parameters())
+        param_groups["fields"] = list(self.prop.parameters()) + list(self.env.parameters()) + list(self.field.parameters())
         return param_groups
        
         
@@ -149,8 +153,7 @@ class ReflectSamplingNeRFModel(Model):
         ray_samples_uniform = self.sampler_uniform(ray_bundle)
 
         # First pass:
-        mean_coarse, cov_coarse = self.prop.get_blob(ray_samples_uniform)
-        density_outputs_coarse, embedding_coarse = self.prop.get_density(mean_coarse, cov_coarse, True)
+        density_outputs_coarse, embedding_coarse = self.prop.get_density(ray_samples_uniform, True)
         weights_coarse = ray_samples_uniform.get_weights(density_outputs_coarse)
         accumulation_coarse = self.renderer_accumulation(weights_coarse)
         depth_coarse = self.renderer_depth(weights_coarse, ray_samples_uniform)
@@ -161,8 +164,7 @@ class ReflectSamplingNeRFModel(Model):
         ray_samples_pdf = self.sampler_pdf(ray_bundle, ray_samples_uniform, weights_coarse)
 
         # Second pass:
-        mean_fine, cov_fine = self.field.get_blob(ray_samples_pdf)
-        density_outputs_fine, embedding_fine = self.field.get_density(mean_fine, cov_fine, True)
+        density_outputs_fine, embedding_fine = self.field.get_density(ray_samples_pdf, True)
         weights_fine = ray_samples_pdf.get_weights(density_outputs_fine)
         accumulation_fine = self.renderer_accumulation(weights_fine)
         depth_fine = self.renderer_depth(weights_fine, ray_samples_pdf)
@@ -285,16 +287,16 @@ class ReflectSamplingNeRFModel(Model):
             nears=torch.rand_like(ray_bundle.nears[mask, :])*self.near,
             fars=torch.ones_like(ray_bundle.fars[mask, :])*self.far
         )
+        background_color = self.env.get_env(reflections, sqradius)
 
         ray_samples_reflect_lindisp = self.sampler_lindisp(reflect_ray_bundle)
-        mean_reflect_coarse, cov_reflect_coarse = self.prop.get_blob(ray_samples_reflect_lindisp)
-        density_outputs_reflect_coarse, embedding_reflect_coarse = self.prop.get_density(mean_reflect_coarse, cov_reflect_coarse)
+        
+        density_outputs_reflect_coarse, embedding_reflect_coarse = self.prop.get_density(ray_samples_reflect_lindisp)
         weights_reflect_coarse = ray_samples_reflect_lindisp.get_weights(density_outputs_reflect_coarse)
       
         ray_samples_reflect_pdf = self.sampler_pdf(reflect_ray_bundle, ray_samples_reflect_lindisp, weights_reflect_coarse)
 
-        mean_reflect_fine, cov_reflect_fine = self.field.get_blob(ray_samples_reflect_pdf)
-        density_outputs_reflect_fine, embedding_reflect_fine = self.field.get_density(mean_reflect_fine, cov_reflect_fine)
+        density_outputs_reflect_fine, embedding_reflect_fine = self.field.get_density(ray_samples_reflect_pdf)
         weights_reflect_fine = ray_samples_reflect_pdf.get_weights(density_outputs_reflect_fine)
         
         pred_normals_outputs_reflect_fine = self.field.get_pred_normals(embedding_reflect_fine)
@@ -308,15 +310,18 @@ class ReflectSamplingNeRFModel(Model):
         mid_outputs_reflect_fine = self.field.get_mid(reflections_outputs_reflect_fine, n_dot_d_outputs_reflect_fine, roughness_outputs_reflect_fine, embedding_reflect_fine, True)
         
         outputs_reflect_fine = diff_outputs_reflect_fine + tint_outputs_reflect_fine*mid_outputs_reflect_fine
-        reflect_fine = self.renderer_reflect(outputs_reflect_fine, weights_reflect_fine.detach())
+        reflect_fine = self.renderer_reflect(outputs_reflect_fine, weights_reflect_fine, background_color=background_color)
         
         
         
         outputs["reflect_fine"][mask, :] = diff_fine[mask, :] + tint_fine[mask, :] * reflect_fine
         outputs["reflect_fine"][mask, :] = torch.clip(outputs["reflect_fine"][mask, :], 0.0, 1.0)
         
-        outputs["depth_reflect_fine"] = self.renderer_depth(weights_reflect_fine, ray_samples_reflect_pdf)
-        print("depth :",torch.quantile(outputs["depth_reflect_fine"].cpu(), q=q).detach().numpy())
+        accumulation_reflect = self.renderer_accumulation(weights_reflect_fine)
+        print("accumulation :",torch.quantile(accumulation_reflect.cpu(), q=q).detach().numpy())
+        
+        depth_reflect = self.renderer_depth(weights_reflect_fine, ray_samples_reflect_pdf)
+        print("depth        :",torch.quantile(depth_reflect.cpu(), q=q).detach().numpy())
         
         return outputs
 
