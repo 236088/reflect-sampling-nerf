@@ -182,14 +182,14 @@ class ReflectSamplingNeRFModel(Model):
         mid_outputs_fine = self.field.get_mid(reflections_outputs_fine, n_dot_d_outputs_fine, roughness_outputs_fine, embedding_fine, True)
         
         outputs_fine = diff_outputs_fine + tint_outputs_fine*mid_outputs_fine
-        rgb_fine = self.renderer_rgb(outputs_fine.detach(), weights_fine)
+        rgb_fine = self.renderer_rgb(outputs_fine, weights_fine)
         rgb_fine = torch.clip(rgb_fine, 0.0, 1.0)
 
 
         diff_fine = self.renderer_rgb(diff_outputs_fine, weights_fine)
-        # diff_fine = diff_fine.detach()
+        diff_fine = diff_fine.detach()
         tint_fine = self.renderer_factor(tint_outputs_fine, weights_fine)
-        # tint_fine = tint_fine.detach()
+        tint_fine = tint_fine.detach()
         
         pred_normals_fine = self.renderer_normals(pred_normals_outputs_fine, weights_fine)
         pred_normals_fine = pred_normals_fine.detach()
@@ -272,12 +272,12 @@ class ReflectSamplingNeRFModel(Model):
         diff_outputs_normal_fine = self.field.get_diff(embedding_normal_fine) 
         tint_outputs_normal_fine = self.field.get_tint(embedding_normal_fine)
         
-        low_outputs_normal_fine = self.field.get_low(embedding_normal_fine, True)
+        # low_outputs_normal_fine = self.field.get_low(embedding_normal_fine, True)
         roughness_outputs_normal_fine = self.field.get_roughness(embedding_normal_fine, activation=nn.Softplus())
-        mid_outputs_normal_fine = self.field.get_mid(reflections_outputs_normal_fine, n_dot_d_outputs_normal_fine, roughness_outputs_normal_fine.detach(), embedding_normal_fine, True)
+        mid_outputs_normal_fine = self.field.get_mid(reflections_outputs_normal_fine, n_dot_d_outputs_normal_fine, roughness_outputs_normal_fine, embedding_normal_fine, True)
         
-        outputs_normal_fine = diff_outputs_normal_fine*low_outputs_normal_fine.detach() + tint_outputs_normal_fine*mid_outputs_normal_fine
-        normal_fine = self.renderer_reflect(outputs_normal_fine, weights_normal_fine, normal_background_color)
+        outputs_normal_fine = diff_outputs_normal_fine.detach() + tint_outputs_normal_fine.detach()*mid_outputs_normal_fine
+        normal_fine = self.renderer_reflect(outputs_normal_fine, weights_normal_fine.detach(), normal_background_color)
         '''
         
         
@@ -310,7 +310,7 @@ class ReflectSamplingNeRFModel(Model):
         roughness_outputs_reflect_fine = self.field.get_roughness(embedding_reflect_fine, activation=nn.Softplus())
         mid_outputs_reflect_fine = self.field.get_mid(reflections_outputs_reflect_fine, n_dot_d_outputs_reflect_fine, roughness_outputs_reflect_fine, embedding_reflect_fine, True)
         
-        outputs_reflect_fine = diff_outputs_reflect_fine + tint_outputs_reflect_fine*mid_outputs_reflect_fine
+        outputs_reflect_fine = diff_outputs_reflect_fine.detach() + tint_outputs_reflect_fine.detach()*mid_outputs_reflect_fine
         reflect_fine = self.renderer_reflect(outputs_reflect_fine, weights_reflect_fine, background_color=reflect_background_color)
         
         
