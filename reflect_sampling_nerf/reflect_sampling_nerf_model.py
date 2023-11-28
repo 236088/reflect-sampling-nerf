@@ -192,7 +192,7 @@ class ReflectSamplingNeRFModel(Model):
         tint_fine = tint_fine.detach()
         
         pred_normals_fine = self.renderer_normals(pred_normals_outputs_fine, weights_fine)
-        pred_normals_fine = pred_normals_fine.detach()
+        # pred_normals_fine = pred_normals_fine.detach()
         n_dot_d = torch.sum(pred_normals_fine*ray_bundle.directions, dim=-1, keepdim=True)
         n_dot_d = n_dot_d.detach()
 
@@ -236,7 +236,7 @@ class ReflectSamplingNeRFModel(Model):
         origins=origins.detach()
         reflections = ray_bundle.directions[mask, :] - 2*n_dot_d[mask, :]*pred_normals_fine[mask, :]
         reflections = torch.nn.functional.normalize(reflections, dim=-1)
-        reflections = reflections.detach()
+        # reflections = reflections.detach()
         sqradius = 2*torch.abs(n_dot_d[mask, :])*roughness[mask, :]
         sqradius = sqradius.detach()
 
