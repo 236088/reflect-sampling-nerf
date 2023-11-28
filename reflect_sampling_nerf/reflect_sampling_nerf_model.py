@@ -310,7 +310,7 @@ class ReflectSamplingNeRFModel(Model):
         
         # low_outputs_reflect_fine = self.field.get_low(embedding_reflect_fine, True)
         roughness_outputs_reflect_fine = self.field.get_roughness(embedding_reflect_fine, activation=nn.Softplus())
-        mid_outputs_reflect_fine = self.field.get_mid(reflections_outputs_reflect_fine.detach(), n_dot_d_outputs_reflect_fine.detach(), roughness_outputs_reflect_fine.detach(), embedding_reflect_fine, True)
+        mid_outputs_reflect_fine = self.field.get_mid(reflections_outputs_reflect_fine.detach(), n_dot_d_outputs_reflect_fine.detach(), roughness_outputs_reflect_fine, embedding_reflect_fine, True)
         
         outputs_reflect_fine = diff_outputs_reflect_fine.detach() + tint_outputs_reflect_fine.detach()*mid_outputs_reflect_fine
         reflect_fine = self.renderer_reflect(outputs_reflect_fine, weights_reflect_fine, background_color=reflect_background_color)
