@@ -45,11 +45,11 @@ reflect_sampling_nerf = MethodSpecification(
             # TODO: consider changing optimizers depending on your custom method
             "proposal_networks": {
                 "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-6),
-                "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-5, warmup_steps=1000, max_steps=100000),
+                "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, warmup_steps=1000, max_steps=100000),
             },
             "fields": {
                 "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-6),
-                "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-5, warmup_steps=1000, max_steps=100000),
+                "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, warmup_steps=1000, max_steps=100000),
             },
             "camera_opt": {
                 "optimizer": AdamOptimizerConfig(lr=1e-3, eps=1e-15),

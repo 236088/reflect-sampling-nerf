@@ -174,7 +174,7 @@ class ReflectSamplingNeRFNerfField(Field):
         self.field_output_bottleneck = FieldHead(out_dim=self.mlp_base.get_out_dim(), field_head_name="bottleneck", in_dim=self.mlp_base.get_out_dim(), activation=None)
         
         self.mlp_mid = MLP(
-            in_dim=self.direction_encoding.get_out_dim()+1+self.mlp_base.get_out_dim(),
+            in_dim=self.direction_encoding.get_out_dim()+self.mlp_base.get_out_dim(),
             num_layers=head_mlp_num_layers,
             layer_width=head_mlp_layer_width,
             out_activation=nn.ReLU()
@@ -232,17 +232,17 @@ class ReflectSamplingNeRFNerfField(Field):
         self, embedding:Tensor, use_bottleneck:bool=True
     ) ->Tensor:
         embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
-        mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim()+1,), device=embedding.device), embedding], dim=-1))
+        mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim(),), device=embedding.device), embedding], dim=-1))
         outputs = self.field_output_mid(mlp_out)
         return outputs
     
     
     def get_mid(
-        self, directions:Tensor, n_dot_d:Tensor, roughness:Tensor, embedding:Tensor, use_bottleneck:bool=True
+        self, directions:Tensor, roughness:Tensor, embedding:Tensor, use_bottleneck:bool=True
     ) ->Tensor:
         encoded_dir = self.direction_encoding(directions.detach(), roughness)
         embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
-        mlp_out = self.mlp_mid(torch.cat([encoded_dir, n_dot_d.detach(), embedding], dim=-1))
+        mlp_out = self.mlp_mid(torch.cat([encoded_dir, embedding], dim=-1))
         outputs = self.field_output_mid(mlp_out)
         return outputs
     
