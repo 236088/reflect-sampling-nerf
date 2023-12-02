@@ -77,7 +77,7 @@ class ReflectSamplingNeRFPipeline(VanillaPipeline):
             dist.barrier(device_ids=[local_rank])
 
     def get_train_loss_dict(self, step: int):
-        if step<10:
+        if step<50:
             self.model.config.loss_coefficients["pred_normal_loss_value"]=0.0
             self.model.config.loss_coefficients["orientation_loss_value"]=0.0
         else:

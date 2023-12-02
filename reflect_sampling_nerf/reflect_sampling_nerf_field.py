@@ -221,7 +221,7 @@ class ReflectSamplingNeRFNerfField(Field):
 
     '''exp(-softplus(x))=sigmoid(-x)'''
     def get_roughness(
-        self, embedding:Tensor, activation:Optional[nn.Module]=nn.Sigmoid()
+        self, embedding:Tensor, activation:Optional[nn.Module]=nn.Softmax()
     ) -> Tensor:
         outputs = self.field_output_roughness(embedding)
         outputs = activation(outputs)
