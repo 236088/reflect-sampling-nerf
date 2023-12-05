@@ -143,6 +143,8 @@ class ReflectSamplingNeRFModel(Model):
             raise ValueError("populate_fields() must be called before get_outputs")
 
         # uniform sampling
+        # ray_bundle.nears = torch.ones_like(ray_bundle.nears)*self.near
+        ray_bundle.fars = torch.ones_like(ray_bundle.fars)*self.far
         ray_samples_reciprocal = self.sampler_reciprocal(ray_bundle)
 
         # First pass:
@@ -319,11 +321,12 @@ class ReflectSamplingNeRFModel(Model):
         accumulation_reflect = self.renderer_accumulation(weights_reflect_fine)
         outputs["accumulation_reflect"][mask, :] = accumulation_reflect
         print("accumulation :",torch.quantile(outputs["accumulation_reflect"][mask, :].cpu(), q=q).detach().numpy())
-        print(torch.sum(accumulation_reflect>1-torch.exp(-sqradius[mask])))
+        # print(torch.sum(accumulation_reflect>1-torch.exp(-torch.pi*sqradius[mask])))
 
         depth_reflect = self.renderer_depth(weights_reflect_fine, ray_samples_reflect_pdf)
         print("depth        :",torch.quantile(depth_reflect.cpu(), q=q).detach().numpy())
         print("acc/depth    :",torch.quantile(accumulation_reflect.cpu()/depth_reflect.cpu(), q=q).detach().numpy())
+        print("env :",torch.quantile(torch.sum(reflect_background_color.cpu(),dim=-1), q=q).detach().numpy())
         
         outputs["reflect"][mask, :] = reflect_fine
         
@@ -356,7 +359,7 @@ class ReflectSamplingNeRFModel(Model):
         
         # existance_loss_value = torch.sum(self.bce_loss(outputs["accumulation_reflect"], outputs["accumulation_reflect"]))
         
-        print(loss_reflect_fine.item(), loss_fine.item())
+        print(loss_reflect_fine.item(), "<" if loss_reflect_fine.item()<loss_fine.item() else ">", loss_fine.item())
         print(pred_normal_loss_value.item(), orientation_loss_value.item())
         print(interlevel_loss_value.item(), distortion_loss_value.item())
 

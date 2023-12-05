@@ -91,6 +91,7 @@ class ReflectSamplingNeRFEnvironmentField(Field):
         position_encoding: Encoding = Identity(in_dim=3),
         base_mlp_num_layers: int = 4,
         base_mlp_layer_width: int = 256,
+        env_bias: float = 1.0,
     ) -> None:
         super().__init__()
         self.position_encoding = position_encoding
@@ -103,6 +104,7 @@ class ReflectSamplingNeRFEnvironmentField(Field):
         )
         
         self.field_output_env = RGBFieldHead(self.mlp_base.get_out_dim())
+        self.env_bias = env_bias
         
  
     '''
@@ -121,10 +123,10 @@ class ReflectSamplingNeRFEnvironmentField(Field):
         outer = directions[...,:,None]*directions[...,None,:]
         eyes = torch.eye(directions.shape[-1], device=directions.device).expand(outer.shape)
         mean = 2*directions
-        cov = 0.15*outer + 0.6*sqradius[...,None]*(eyes-outer)
+        cov = 0.6*sqradius[...,None]*(eyes-outer)
         encoded_xyz = self.position_encoding(mean, covs=cov)
         mlp_out = self.mlp_base(encoded_xyz)
-        outputs = self.field_output_env(mlp_out)
+        outputs = self.field_output_env(mlp_out+self.env_bias)
         return outputs
        
     # TODO: Override any potential methods to implement your own field.
