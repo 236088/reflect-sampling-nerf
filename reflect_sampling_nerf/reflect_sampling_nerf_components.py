@@ -375,3 +375,20 @@ class IntegratedSHEncoding(Encoding):
         outputs[...,8:17]*=torch.exp(-roughness*10)
         outputs[...,17:34]*=torch.exp(-roughness*36)
         return outputs
+    
+class ReciprocalSampler(SpacedSampler):
+
+    def __init__(
+        self,
+        tan: float = 1.0,
+        num_samples: Optional[int] = None,
+        train_stratified=True,
+        single_jitter=False
+    ) -> None:
+        super().__init__(
+            num_samples=num_samples,
+            spacing_fn=lambda x: x/(tan+x),
+            spacing_fn_inv=lambda x: x*tan/(1-x),
+            train_stratified=train_stratified,
+            single_jitter=single_jitter,
+        )
