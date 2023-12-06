@@ -215,7 +215,6 @@ class ReflectSamplingNeRFNerfField(Field):
         self, embedding:Tensor
     ) -> Tensor:
         outputs = -self.field_output_normals(embedding)
-        outputs = nn.functional.normalize(outputs, dim=-1)
         return outputs
     
     def get_normals(self) -> Tensor:
