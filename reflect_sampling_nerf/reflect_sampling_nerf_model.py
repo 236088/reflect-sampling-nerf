@@ -57,6 +57,7 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
         "smooth_normal_loss": 1e-2,
         "interlevel_loss": 1.0,
         "distortion_loss": 1e-2,
+        "emptiness_loss": 1e-5,
         # "existance_loss": 1e-5,
         })
 
@@ -294,12 +295,12 @@ class ReflectSamplingNeRFModel(Model):
         ray_samples_reflect_reciprocal = self.sampler_reciprocal(reflect_ray_bundle)
         
         density_outputs_ref_prop, embedding_reflect_coarse = self.prop.get_density(ray_samples_reflect_reciprocal)
-        weights_reflect_coarse = ray_samples_reflect_reciprocal.get_weights(density_outputs_ref_prop)
+        weights_ref_prop = ray_samples_reflect_reciprocal.get_weights(density_outputs_ref_prop)
       
-        ray_samples_reflect_pdf = self.sampler_pdf(reflect_ray_bundle, ray_samples_reflect_reciprocal, weights_reflect_coarse)
+        ray_samples_reflect_pdf = self.sampler_pdf(reflect_ray_bundle, ray_samples_reflect_reciprocal, weights_ref_prop)
 
         density_outputs_ref, embedding_reflect_fine = self.field.get_density(ray_samples_reflect_pdf)
-        weights_reflect_fine = ray_samples_reflect_pdf.get_weights(density_outputs_ref)
+        weights_ref = ray_samples_reflect_pdf.get_weights(density_outputs_ref)
         
         raw_normals_outputs_ref = self.field.get_pred_normals(embedding_reflect_fine)
         pred_normals_outputs_ref = nn.functional.normalize(raw_normals_outputs_ref, dim=-1)
@@ -313,17 +314,17 @@ class ReflectSamplingNeRFModel(Model):
         mid_outputs_ref = self.field.get_mid(reflections_outputs_ref, n_dot_d_outputs_ref, roughness_outputs_ref, embedding_reflect_fine, True)
         
         outputs_ref = diff_outputs_ref + tint_outputs_ref*mid_outputs_ref
-        reflect_fine = self.renderer_rgb(outputs_ref, weights_reflect_fine, background_color=ref_background_color)
+        reflect_fine = self.renderer_rgb(outputs_ref.detach(), weights_ref.detach(), background_color=ref_background_color)
                 
-        outputs["reflect_fine"][mask, :] = diff[mask, :] + tint[mask, :]*reflect_fine
+        outputs["reflect_fine"][mask, :] = diff[mask, :].detach() + tint[mask, :].detach()*reflect_fine
         outputs["reflect_fine"][mask, :] = torch.clip(outputs["reflect_fine"][mask, :], 0.0, 1.0)
         
-        accumulation_reflect = self.renderer_accumulation(weights_reflect_fine)
+        accumulation_reflect = self.renderer_accumulation(weights_ref)
         outputs["accumulation_reflect"][mask, :] = accumulation_reflect
         print("accumulation :",torch.quantile(outputs["accumulation_reflect"][mask, :].cpu(), q=q).detach().numpy())
         # print(torch.sum(accumulation_reflect>1-torch.exp(-torch.pi*sqradius[mask])))
 
-        depth_reflect = self.renderer_depth(weights_reflect_fine, ray_samples_reflect_pdf)
+        depth_reflect = self.renderer_depth(weights_ref, ray_samples_reflect_pdf)
         print("depth        :",torch.quantile(depth_reflect.cpu(), q=q).detach().numpy())
         print("acc/depth    :",torch.quantile(accumulation_reflect.cpu()/depth_reflect.cpu(), q=q).detach().numpy())
         print("env :",torch.quantile(torch.sum(ref_background_color.cpu(),dim=-1), q=q).detach().numpy())
@@ -357,6 +358,7 @@ class ReflectSamplingNeRFModel(Model):
         
         interlevel_loss_value = interlevel_loss(outputs["weights_list"], outputs["ray_samples_list"])
         distortion_loss_value = distortion_loss(outputs["weights_list"], outputs["ray_samples_list"])
+        emptiness_loss = torch.sum(torch.log(1+outputs["weights_list"][-1]))
         
         # existance_loss_value = torch.sum(self.bce_loss(outputs["accumulation_reflect"], outputs["accumulation_reflect"]))
         
@@ -375,6 +377,7 @@ class ReflectSamplingNeRFModel(Model):
             "smooth_normal_loss": smooth_normal_loss,
             "interlevel_loss": interlevel_loss_value,
             "distortion_loss": distortion_loss_value,
+            "emptiness_loss": emptiness_loss,
             # "existance_loss": existance_loss_value,
             }
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
