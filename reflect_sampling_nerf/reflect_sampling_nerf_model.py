@@ -57,7 +57,6 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
         "smooth_normal_loss": 1e-2,
         "interlevel_loss": 1.0,
         "distortion_loss": 1e-2,
-        "emptiness_loss": 1e-5,
         # "existance_loss": 1e-5,
         })
 
@@ -108,13 +107,15 @@ class ReflectSamplingNeRFModel(Model):
             direction_encoding=direction_encoding,
             spatial_distortion=spatial_distortion
         )
+            
+        self.far = 2**10
+        self.near = 1.0/16
+        self.alpha = 0.0 if self.training else 1.0
 
         # samplers
         self.sampler_reciprocal = ReciprocalSampler(num_samples=self.config.num_coarse_samples, tan=4)
         self.sampler_pdf = PDFSampler(num_samples=self.config.num_importance_samples, include_original=False)
-        self.far = 2**10
-        self.near = 1.0/16
-        
+
         # renderers
         self.background_color = colors.WHITE
         self.renderer_rgb = RGBRenderer(background_color=self.background_color)
@@ -314,9 +315,11 @@ class ReflectSamplingNeRFModel(Model):
         mid_outputs_ref = self.field.get_mid(reflections_outputs_ref, n_dot_d_outputs_ref, roughness_outputs_ref, embedding_reflect_fine, True)
         
         outputs_ref = diff_outputs_ref + tint_outputs_ref*mid_outputs_ref
-        reflect_fine = self.renderer_rgb(outputs_ref.detach(), weights_ref.detach(), background_color=ref_background_color)
+        if self.training:
+            self.alpha = 1 - (1 - 1e-4)*(1 - self.alpha)
+        reflect_fine = self.renderer_rgb(outputs_ref.detach(), weights_ref.detach()*self.alpha, background_color=ref_background_color)
                 
-        outputs["reflect_fine"][mask, :] = diff[mask, :].detach() + tint[mask, :].detach()*reflect_fine
+        outputs["reflect_fine"][mask, :] = diff[mask, :] + tint[mask, :]*reflect_fine
         outputs["reflect_fine"][mask, :] = torch.clip(outputs["reflect_fine"][mask, :], 0.0, 1.0)
         
         accumulation_reflect = self.renderer_accumulation(weights_ref)
@@ -358,8 +361,7 @@ class ReflectSamplingNeRFModel(Model):
         
         interlevel_loss_value = interlevel_loss(outputs["weights_list"], outputs["ray_samples_list"])
         distortion_loss_value = distortion_loss(outputs["weights_list"], outputs["ray_samples_list"])
-        emptiness_loss = torch.sum(torch.log(1+outputs["weights_list"][-1]))
-        
+    
         # existance_loss_value = torch.sum(self.bce_loss(outputs["accumulation_reflect"], outputs["accumulation_reflect"]))
         
         print(ref_rgb_loss.item(), "<" if ref_rgb_loss.item()<rgb_loss.item() else ">", rgb_loss.item())
@@ -377,7 +379,6 @@ class ReflectSamplingNeRFModel(Model):
             "smooth_normal_loss": smooth_normal_loss,
             "interlevel_loss": interlevel_loss_value,
             "distortion_loss": distortion_loss_value,
-            "emptiness_loss": emptiness_loss,
             # "existance_loss": existance_loss_value,
             }
         loss_dict = misc.scale_dict(loss_dict, self.config.loss_coefficients)
