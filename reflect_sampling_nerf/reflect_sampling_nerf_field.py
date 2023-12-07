@@ -230,19 +230,19 @@ class ReflectSamplingNeRFNerfField(Field):
     
     
     def get_low(
-        self, embedding:Tensor, use_bottleneck:bool=True
+        self, n_dot_d:Tensor, embedding:Tensor
     ) ->Tensor:
-        embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
-        mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim(),), device=embedding.device), embedding], dim=-1))
+        embedding = self.field_output_bottleneck(embedding)
+        mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim(),), device=embedding.device), n_dot_d.detach(), embedding], dim=-1))
         outputs = self.field_output_mid(mlp_out)
         return outputs
     
     
     def get_mid(
-        self, directions:Tensor, n_dot_d:Tensor, roughness:Tensor, embedding:Tensor, use_bottleneck:bool=True
+        self, directions:Tensor, n_dot_d:Tensor, roughness:Tensor, embedding:Tensor
     ) ->Tensor:
         encoded_dir = self.direction_encoding(directions.detach(), roughness)
-        embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
+        embedding = self.field_output_bottleneck(embedding)
         mlp_out = self.mlp_mid(torch.cat([encoded_dir, n_dot_d.detach(), embedding], dim=-1))
         outputs = self.field_output_mid(mlp_out)
         return outputs
