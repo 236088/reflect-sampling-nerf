@@ -111,6 +111,7 @@ class ReflectSamplingNeRFModel(Model):
         self.far = 2**10
         self.near = 1.0/16
         self.alpha = 0.0 if self.training else 1.0
+        self.gamma = lambda x: torch.clip(torch.where(x <= 0.0031308, x * 12.92, torch.pow(x, 1/2.4) * 1.055 - 0.055), 0.0, 1.0)
 
         # samplers
         self.sampler_reciprocal = ReciprocalSampler(num_samples=self.config.num_prop_samples, tan=4)
@@ -181,13 +182,13 @@ class ReflectSamplingNeRFModel(Model):
         diff_outputs = self.field.get_diff(embedding) 
         tint_outputs = self.field.get_tint(embedding)
         
-        # low_outputs = self.field.get_low(embedding, n_dot_d_outputs)
+        low_outputs = self.field.get_low(n_dot_d_outputs, embedding)
         roughness_outputs = self.field.get_roughness(embedding)
         mid_outputs = self.field.get_mid(reflections_outputs, n_dot_d_outputs, roughness_outputs, embedding)
         
-        outputs = diff_outputs + tint_outputs*mid_outputs
+        outputs = diff_outputs*low_outputs + tint_outputs*mid_outputs
         rgb = self.renderer_rgb(outputs, weights, background_color=background_color)
-        rgb = torch.clip(rgb, 0.0, 1.0)
+        rgb = self.gamma(rgb)
 
 
         diff = self.renderer_rgb(diff_outputs, weights.detach(), background_color=background_color)
@@ -200,12 +201,6 @@ class ReflectSamplingNeRFModel(Model):
         roughness = 1-self.renderer_roughness(roughness, weights.detach())
         
         mask = torch.logical_and(accumulation>1e-2, n_dot_d<0).reshape(-1)
-        print(mask[mask].shape, mask[(accumulation>1e-2).reshape(-1)].shape, mask[(n_dot_d<0).reshape(-1)].shape)
-
-        q=torch.tensor([0.1,0.3,0.5,0.7,0.9])
-        print("roughness :",torch.quantile(roughness[mask,:].cpu(), q=q).detach().numpy())
-        print("diffuse   :", torch.quantile(torch.sum((diff[mask,:]).cpu(), dim=-1), q=q).detach().numpy())
-        print("tint      :", torch.quantile(torch.sum((tint[mask,:]).cpu(), dim=-1), q=q).detach().numpy())
 
         origins = ray_bundle.origins + depth*ray_bundle.directions
         reflections = ray_bundle.directions - 2*n_dot_d.detach()*pred_normals.detach()
@@ -253,7 +248,7 @@ class ReflectSamplingNeRFModel(Model):
         sigma as radius
         '''
         
-        '''
+
         normal_ray_bundle = RayBundle(
             origins=origins[mask, :],
             directions=pred_normals[mask, :],
@@ -264,7 +259,7 @@ class ReflectSamplingNeRFModel(Model):
         normal_background_color = self.env.get_env(pred_normals[mask, :], 2*torch.ones_like(sqradius[mask, :]))
 
         ray_samples_normal_reciprocal = self.sampler_reciprocal(normal_ray_bundle)
-        density_outputs_normal_prop, embedding_normal_prop = self.prop.get_density(ray_samples_normal_reciprocal)
+        density_outputs_normal_prop, _ = self.prop.get_density(ray_samples_normal_reciprocal)
         weights_normal_prop = ray_samples_normal_reciprocal.get_weights(density_outputs_normal_prop)
       
         ray_samples_normal_pdf = self.sampler_pdf(normal_ray_bundle, ray_samples_normal_reciprocal, weights_normal_prop)
@@ -278,14 +273,13 @@ class ReflectSamplingNeRFModel(Model):
         diff_outputs_normal = self.field.get_diff(embedding_normal) 
         tint_outputs_normal = self.field.get_tint(embedding_normal)
         
-        low_outputs_normal = self.field.get_low(embedding_normal, n_dot_d_outputs_normal)
+        low_outputs_normal = self.field.get_low(n_dot_d_outputs_normal, embedding_normal)
         roughness_outputs_normal = self.field.get_roughness(embedding_normal)
         mid_outputs_normal = self.field.get_mid(ray_samples_normal_pdf.frustums.directions, n_dot_d_outputs_normal, roughness_outputs_normal.detach(), embedding_normal)
         
         outputs_normal = diff_outputs_normal*low_outputs_normal + tint_outputs_normal*mid_outputs_normal
         normal = self.renderer_rgb(outputs_normal.detach(), weights_normal.detach()*self.alpha, normal_background_color)
-        '''
-        
+
         
         reflect_ray_bundle = RayBundle(
             origins=origins[mask, :].detach(),
@@ -313,16 +307,25 @@ class ReflectSamplingNeRFModel(Model):
         diff_outputs_ref = self.field.get_diff(embedding_ref) 
         tint_outputs_ref = self.field.get_tint(embedding_ref)
         
-        # low_outputs_ref = self.field.get_low(embedding_ref, n_dot_d_outputs_ref)
+        low_outputs_ref = self.field.get_low(n_dot_d_outputs_ref, embedding_ref)
         roughness_outputs_ref = self.field.get_roughness(embedding_ref)
         mid_outputs_ref = self.field.get_mid(reflections_outputs_ref, n_dot_d_outputs_ref, roughness_outputs_ref, embedding_ref)
         
-        outputs_ref = diff_outputs_ref + tint_outputs_ref*mid_outputs_ref
+        outputs_ref = diff_outputs_ref*low_outputs_ref + tint_outputs_ref*mid_outputs_ref
 
         reflect = self.renderer_rgb(outputs_ref.detach(), weights_ref.detach()*self.alpha, background_color=ref_background_color)
                 
-        outputs["reflect_rgb"][mask, :] = diff[mask, :] + tint[mask, :]*reflect
-        outputs["reflect_rgb"][mask, :] = torch.clip(outputs["reflect_rgb"][mask, :], 0.0, 1.0)
+        outputs["reflect_rgb"][mask, :] = diff[mask, :]*normal + tint[mask, :]*reflect
+        outputs["reflect_rgb"][mask, :] = self.gamma(outputs["reflect_rgb"][mask, :])
+        
+        
+        print(mask[mask].shape, mask[(accumulation>1e-2).reshape(-1)].shape, mask[(n_dot_d<0).reshape(-1)].shape)
+
+        q=torch.tensor([0.1,0.3,0.5,0.7,0.9])
+        print("roughness :",torch.quantile(roughness[mask,:].cpu(), q=q).detach().numpy())
+        print("diffuse   :", torch.quantile(torch.sum((diff[mask,:]).cpu(), dim=-1), q=q).detach().numpy())
+        print("tint      :", torch.quantile(torch.sum((tint[mask,:]).cpu(), dim=-1), q=q).detach().numpy())
+        print("env :",torch.quantile(torch.sum(ref_background_color.cpu(),dim=-1), q=q).detach().numpy())
         
         accumulation_ref = self.renderer_accumulation(weights_ref)
         outputs["accumulation_ref"][mask, :] = accumulation_ref
@@ -332,7 +335,6 @@ class ReflectSamplingNeRFModel(Model):
         depth_reflect = self.renderer_depth(weights_ref, ray_samples_ref_pdf)
         print("depth        :",torch.quantile(depth_reflect.cpu(), q=q).detach().numpy())
         print("acc/depth    :",torch.quantile(accumulation_ref.cpu()/depth_reflect.cpu(), q=q).detach().numpy())
-        print("env :",torch.quantile(torch.sum(ref_background_color.cpu(),dim=-1), q=q).detach().numpy())
         
         outputs["reflect"][mask, :] = reflect
         
