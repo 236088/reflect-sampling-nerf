@@ -250,15 +250,16 @@ class ReflectSamplingNeRFModel(Model):
         
 
         normal_ray_bundle = RayBundle(
-            origins=origins[mask, :],
-            directions=pred_normals[mask, :],
+            origins=origins[mask, :].detach(),
+            directions=pred_normals[mask, :].detach(),
             pixel_area=torch.pi*2*torch.ones_like(sqradius[mask, :]),
             nears=torch.ones_like(ray_bundle.nears[mask, :])*self.near,
             fars=torch.ones_like(ray_bundle.fars[mask, :])*self.far
         )
-        normal_background_color = self.env.get_env(pred_normals[mask, :], 2*torch.ones_like(sqradius[mask, :]))
+        normal_background_color = self.env.get_env(pred_normals[mask, :].detach(), 2*torch.ones_like(sqradius[mask, :]))
 
         ray_samples_normal_reciprocal = self.sampler_reciprocal(normal_ray_bundle)
+        
         density_outputs_normal_prop, _ = self.prop.get_density(ray_samples_normal_reciprocal)
         weights_normal_prop = ray_samples_normal_reciprocal.get_weights(density_outputs_normal_prop)
       
@@ -267,7 +268,8 @@ class ReflectSamplingNeRFModel(Model):
         density_outputs_normal, embedding_normal = self.field.get_density(ray_samples_normal_pdf)
         weights_normal = ray_samples_normal_pdf.get_weights(density_outputs_normal)
         
-        pred_normals_outputs_normal = self.field.get_pred_normals(embedding_normal)
+        raw_normals_outputs_normal = self.field.get_pred_normals(embedding_normal)
+        pred_normals_outputs_normal = nn.functional.normalize(raw_normals_outputs_normal, dim=-1)
         reflections_outputs_normal, n_dot_d_outputs_normal = self.field.get_reflection(ray_samples_normal_pdf.frustums.directions, pred_normals_outputs_normal)
             
         diff_outputs_normal = self.field.get_diff(embedding_normal) 
@@ -275,11 +277,12 @@ class ReflectSamplingNeRFModel(Model):
         
         low_outputs_normal = self.field.get_low(n_dot_d_outputs_normal, embedding_normal)
         roughness_outputs_normal = self.field.get_roughness(embedding_normal)
-        mid_outputs_normal = self.field.get_mid(ray_samples_normal_pdf.frustums.directions, n_dot_d_outputs_normal, roughness_outputs_normal.detach(), embedding_normal)
+        mid_outputs_normal = self.field.get_mid(reflections_outputs_normal, n_dot_d_outputs_normal, roughness_outputs_normal, embedding_normal)
         
         outputs_normal = diff_outputs_normal*low_outputs_normal + tint_outputs_normal*mid_outputs_normal
-        normal = self.renderer_rgb(outputs_normal.detach(), weights_normal.detach()*self.alpha, normal_background_color)
+        normal = self.renderer_rgb(outputs_normal.detach(), weights_normal.detach()*self.alpha, background_color=normal_background_color)
 
+        
         
         reflect_ray_bundle = RayBundle(
             origins=origins[mask, :].detach(),
