@@ -197,8 +197,8 @@ class ReflectSamplingNeRFModel(Model):
         pred_normals = self.renderer_normals(raw_normals_outputs, weights.detach())
         n_dot_d = torch.sum(pred_normals*ray_bundle.directions, dim=-1, keepdim=True)
 
-        roughness = torch.exp(-roughness_outputs)
-        roughness = 1-self.renderer_roughness(roughness, weights.detach())
+        # 
+        roughness = 1-self.renderer_roughness(torch.exp(-roughness_outputs), weights.detach())
         
         mask = torch.logical_and(accumulation>1e-2, n_dot_d<0).reshape(-1)
 
@@ -220,7 +220,7 @@ class ReflectSamplingNeRFModel(Model):
             "ray_samples_list": [ray_samples_reciprocal, ray_samples_pdf],
             "diff_outputs": diff_outputs,
             "tint_outputs": tint_outputs,
-            "roughness_outputs": 1-torch.exp(-roughness_outputs),
+            "roughness_outputs": self.field.get_roughness(embedding, activation=nn.Sigmoid()),
             "pred_normals_outputs": pred_normals_outputs,
             "normals_outputs": normals_outputs,
             "directions": ray_bundle.directions,
