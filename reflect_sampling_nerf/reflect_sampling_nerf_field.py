@@ -173,13 +173,13 @@ class ReflectSamplingNeRFNerfField(Field):
                 
         self.field_output_bottleneck = FieldHead(out_dim=self.mlp_base.get_out_dim(), field_head_name="bottleneck", in_dim=self.mlp_base.get_out_dim(), activation=None)
         
-        self.mlp_mid = MLP(
+        self.mlp_low = MLP(
             in_dim=self.direction_encoding.get_out_dim()+1+self.mlp_base.get_out_dim(),
             num_layers=head_mlp_num_layers,
             layer_width=head_mlp_layer_width,
             out_activation=nn.ReLU()
         )
-        self.field_output_mid = RGBFieldHead(self.mlp_mid.get_out_dim())
+        self.field_output_low = RGBFieldHead(self.mlp_low.get_out_dim())
                 
         self.field_output_normals = PredNormalsFieldHead(in_dim=self.mlp_base.get_out_dim(), activation=None)
         
@@ -226,13 +226,13 @@ class ReflectSamplingNeRFNerfField(Field):
         outputs = activation(outputs)
         return outputs
     
-    def get_mid(
+    def get_low(
         self, directions:Tensor, n_dot_d:Tensor, roughness:Tensor, embedding:Tensor
     ) ->Tensor:
         encoded_dir = self.direction_encoding(directions.detach(), roughness)
         embedding = self.field_output_bottleneck(embedding)
-        mlp_out = self.mlp_mid(torch.cat([encoded_dir, n_dot_d.detach(), embedding], dim=-1))
-        outputs = self.field_output_mid(mlp_out)
+        mlp_out = self.mlp_low(torch.cat([encoded_dir, n_dot_d.detach(), embedding], dim=-1))
+        outputs = self.field_output_low(mlp_out)
         return outputs
     
     def get_diff(
