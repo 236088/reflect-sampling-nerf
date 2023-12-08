@@ -51,7 +51,7 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
     
     loss_coefficients: Dict[str, float] = to_immutable_dict({
         "rgb_loss": 1.0,
-        "separate_rgb_loss": 1.0,
+        # "separate_rgb_loss": 1.0,
         "ref_rgb_loss": 1.0,
         "pred_normal_loss": 3e-4,
         "orientation_loss": 1e-1,
@@ -189,9 +189,9 @@ class ReflectSamplingNeRFModel(Model):
 
         diff = self.renderer_rgb(diff_outputs, weights.detach(), background_color=background_color)
         tint = self.renderer_rgb(tint_outputs, weights.detach())
-        low = self.renderer_rgb(low_outputs, weights.detach())
+        # low = self.renderer_rgb(low_outputs, weights.detach())
         
-        separate_rgb = torch.clip(diff + tint*low, 0.0, 1.0)
+        # separate_rgb = torch.clip(diff + tint*low, 0.0, 1.0)
         
         pred_normals = self.renderer_normals(raw_normals_outputs, weights.detach())
         n_dot_d = torch.sum(pred_normals*ray_bundle.directions, dim=-1, keepdim=True)
@@ -210,7 +210,7 @@ class ReflectSamplingNeRFModel(Model):
         
         outputs = {
             "rgb": rgb,
-            "separate_rgb": separate_rgb,
+            # "separate_rgb": separate_rgb,
             "ref_rgb": background_color.expand(rgb.shape)*(1.0-accumulation),
             "accumulation_prop": accumulation_prop,
             "accumulation": accumulation,
@@ -237,8 +237,8 @@ class ReflectSamplingNeRFModel(Model):
         if not mask.any():
             return outputs
 
-        # if self.training:
-        #     self.alpha = 1 - (1 - 1e-4)*(1 - self.alpha)
+        if self.training:
+            self.alpha = 1 - (1 - 1e-4)*(1 - self.alpha)
         '''        
         roughness to pixelarea as spherical gaussian lobe
         g(|x-mean|, sigma^2) = exp(-|x-mean|^2/(2*sigma^2))
@@ -279,7 +279,7 @@ class ReflectSamplingNeRFModel(Model):
         low_outputs_ref = self.field.get_low(reflections_outputs_ref, n_dot_d_outputs_ref, roughness_outputs_ref, embedding_ref)
         
         outputs_ref = diff_outputs_ref + tint_outputs_ref*low_outputs_ref
-        reflect = self.renderer_rgb(outputs_ref.detach(), weights_ref.detach(), background_color=ref_background_color)
+        reflect = self.renderer_rgb(outputs_ref.detach(), weights_ref.detach()*self.alpha, background_color=ref_background_color)
                 
         outputs["ref_rgb"][mask, :] = torch.clip(diff[mask, :] + tint[mask, :]*reflect, 0.0, 1.0)
         
@@ -313,11 +313,11 @@ class ReflectSamplingNeRFModel(Model):
             gt_image=image,
         )
 
-        pred_separate, image_separate = self.renderer_rgb.blend_background_for_loss_computation(
-            pred_image=outputs["separate_rgb"],
-            pred_accumulation=outputs["accumulation"],
-            gt_image=image,
-        )
+        # pred_separate, image_separate = self.renderer_rgb.blend_background_for_loss_computation(
+        #     pred_image=outputs["separate_rgb"],
+        #     pred_accumulation=outputs["accumulation"],
+        #     gt_image=image,
+        # )
 
         pred_ref, image_ref = self.renderer_rgb.blend_background_for_loss_computation(
             pred_image=outputs["ref_rgb"],
@@ -326,7 +326,7 @@ class ReflectSamplingNeRFModel(Model):
         )
         
         rgb_loss_ = self.rgb_loss(image, pred)
-        separate_rgb_loss_ = self.rgb_loss(image_separate, pred_separate)
+        # separate_rgb_loss_ = self.rgb_loss(image_separate, pred_separate)
         ref_rgb_loss_ = self.rgb_loss(image_ref, pred_ref)
 
         pred_normal_loss_ = torch.sum(pred_normal_loss(outputs["weights_list"][-1].detach(), outputs["normals_outputs"], outputs["pred_normals_outputs"]))
@@ -347,7 +347,7 @@ class ReflectSamplingNeRFModel(Model):
         loss_dict = {
             "rgb_loss": rgb_loss_,
             "ref_rgb_loss": ref_rgb_loss_,
-            "separate_rgb_loss": separate_rgb_loss_,
+            # "separate_rgb_loss": separate_rgb_loss_,
             "pred_normal_loss": pred_normal_loss_,
             "orientation_loss": orientation_loss_,
             "smooth_normal_loss": smooth_normal_loss,
