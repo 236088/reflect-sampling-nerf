@@ -184,12 +184,12 @@ class ReflectSamplingNeRFModel(Model):
         roughness_outputs = self.field.get_roughness(embedding)
         low_outputs = self.field.get_low(reflections_outputs, n_dot_d_outputs, roughness_outputs, embedding)
         
-        diff = self.renderer_rgb(diff_outputs, weights, background_color=background_color)
-        
-        rgb = torch.clip(diff + self.renderer_rgb(tint_outputs*low_outputs, weights), 0.0, 1.0)
+        rgb_outputs = diff_outputs + tint_outputs*low_outputs
+        rgb = torch.clip(self.renderer_rgb(rgb_outputs, weights, background_color=background_color), 0.0, 1.0)
 
-        tint = self.renderer_rgb(tint_outputs, weights)
-        low = self.renderer_rgb(low_outputs, weights)
+        diff = self.renderer_rgb(diff_outputs, weights.detach(), background_color=background_color)
+        tint = self.renderer_rgb(tint_outputs, weights.detach())
+        low = self.renderer_rgb(low_outputs, weights.detach())
         
         separate_rgb = torch.clip(diff + tint*low, 0.0, 1.0)
         
@@ -225,10 +225,10 @@ class ReflectSamplingNeRFModel(Model):
             "pred_normals_outputs": pred_normals_outputs,
             "normals_outputs": normals_outputs,
             "directions": ray_bundle.directions,
-            "diff":diff.detach(),
-            "tint":tint.detach(),
-            "roughness":roughness.detach(),
-            "pred_normals":pred_normals.detach(),
+            "diff":diff,
+            "tint":tint,
+            "roughness":roughness,
+            "pred_normals":pred_normals,
             "sqradius":sqradius,
             "mask":mask,
             "reflect": torch.zeros_like(rgb),
