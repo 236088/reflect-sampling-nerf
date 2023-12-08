@@ -184,15 +184,15 @@ class ReflectSamplingNeRFModel(Model):
         roughness_outputs = self.field.get_roughness(embedding)
         low_outputs = self.field.get_low(reflections_outputs, n_dot_d_outputs, roughness_outputs, embedding)
         
-        outputs = diff_outputs + tint_outputs*low_outputs
-        rgb = self.renderer_rgb(outputs, weights, background_color=background_color)
-        rgb = torch.clip(rgb, 0.0, 1.0)
-
-        diff = self.renderer_rgb(diff_outputs, weights)
-        tint = self.renderer_rgb(tint_outputs, weights)
+        diff = self.renderer_rgb(diff_outputs, weights, background_color=background_color)
         
+        rgb = self.renderer_rgb(tint_outputs*low_outputs, weights)
+        rgb = torch.clip(diff + rgb, 0.0, 1.0)
+
+        tint = self.renderer_rgb(tint_outputs, weights)
         low = self.renderer_rgb(low_outputs, weights)
-        separate_rgb = diff + tint*low
+        
+        separate_rgb = torch.clip(diff + tint*low, 0.0, 1.0)
         
         pred_normals = self.renderer_normals(raw_normals_outputs, weights.detach())
         n_dot_d = torch.sum(pred_normals*ray_bundle.directions, dim=-1, keepdim=True)
@@ -282,8 +282,7 @@ class ReflectSamplingNeRFModel(Model):
         outputs_ref = diff_outputs_ref + tint_outputs_ref*low_outputs_ref
         reflect = self.renderer_rgb(outputs_ref.detach(), weights_ref.detach(), background_color=ref_background_color)
                 
-        outputs["ref_rgb"][mask, :] += (diff[mask, :] + tint[mask, :]*reflect)
-        outputs["ref_rgb"][mask, :] = torch.clip(outputs["ref_rgb"][mask, :], 0.0, 1.0)
+        outputs["ref_rgb"][mask, :] = torch.clip(diff[mask, :] + tint[mask, :]*reflect, 0.0, 1.0)
         
         outputs["reflect"][mask, :] = reflect                
         
