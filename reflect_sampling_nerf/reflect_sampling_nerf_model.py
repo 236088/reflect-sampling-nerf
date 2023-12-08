@@ -54,7 +54,7 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
         "ref_rgb_loss": 1.0,
         "pred_normal_loss": 3e-4,
         "orientation_loss": 1e-1,
-        "smooth_normal_loss": 1e-2,
+        "smooth_normal_loss": 1e-3,
         "interlevel_loss": 1.0,
         "distortion_loss": 1e-2,
         "cauchy_loss": 1e-4,
@@ -334,7 +334,7 @@ class ReflectSamplingNeRFModel(Model):
         interlevel_loss_ = interlevel_loss(outputs["weights_list"], outputs["ray_samples_list"])
         distortion_loss_ = distortion_loss(outputs["weights_list"], outputs["ray_samples_list"])
     
-        cauchy_loss_ = torch.sum(torch.log(1+2*outputs["density_ref_list"][-1]**2))
+        cauchy_loss_ = torch.sum(torch.log(1+outputs["density_list"][-1]**2))
         
         print(ref_rgb_loss_.item(), "<" if ref_rgb_loss_.item()<rgb_loss_.item() else ">", rgb_loss_.item())
         print(pred_normal_loss_.item(), orientation_loss_.item())
