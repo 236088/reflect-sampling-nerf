@@ -46,7 +46,7 @@ class ReflectSamplingNeRFModelConfig(ModelConfig):
 
     num_prop_samples: int = 64
     """Number of samples in coarse field evaluation"""
-    num_importance_samples: int = 64
+    num_importance_samples: int = 32
     """Number of samples in fine field evaluation"""
     
     loss_coefficients: Dict[str, float] = to_immutable_dict({
