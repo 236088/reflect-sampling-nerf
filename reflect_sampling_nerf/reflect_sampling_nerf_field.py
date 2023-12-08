@@ -91,7 +91,7 @@ class ReflectSamplingNeRFEnvironmentField(Field):
         position_encoding: Encoding = Identity(in_dim=3),
         base_mlp_num_layers: int = 4,
         base_mlp_layer_width: int = 256,
-        env_bias: float = 1.0,
+        env_bias: float = 0.0,
     ) -> None:
         super().__init__()
         self.position_encoding = position_encoding
@@ -170,9 +170,7 @@ class ReflectSamplingNeRFNerfField(Field):
         
         self.softplus = nn.Softplus()
         self.sigmoid = nn.Sigmoid()
-        
-        self.field_output_low = RGBFieldHead(self.mlp_base.get_out_dim())
-        
+                
         self.field_output_bottleneck = FieldHead(out_dim=self.mlp_base.get_out_dim(), field_head_name="bottleneck", in_dim=self.mlp_base.get_out_dim(), activation=None)
         
         self.mlp_mid = MLP(
@@ -222,27 +220,17 @@ class ReflectSamplingNeRFNerfField(Field):
 
     '''exp(-softplus(x))=sigmoid(-x)'''
     def get_roughness(
-        self, embedding:Tensor, activation:Optional[nn.Module]=nn.Softmax()
+        self, embedding:Tensor, activation:Optional[nn.Module]=nn.Softplus()
     ) -> Tensor:
         outputs = self.field_output_roughness(embedding)
         outputs = activation(outputs)
         return outputs
     
-    
-    def get_low(
-        self, embedding:Tensor, use_bottleneck:bool=True
-    ) ->Tensor:
-        embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
-        mlp_out = self.mlp_mid(torch.cat([torch.zeros(embedding.shape[:-1]+(self.direction_encoding.get_out_dim(),), device=embedding.device), embedding], dim=-1))
-        outputs = self.field_output_mid(mlp_out)
-        return outputs
-    
-    
     def get_mid(
-        self, directions:Tensor, n_dot_d:Tensor, roughness:Tensor, embedding:Tensor, use_bottleneck:bool=True
+        self, directions:Tensor, n_dot_d:Tensor, roughness:Tensor, embedding:Tensor
     ) ->Tensor:
         encoded_dir = self.direction_encoding(directions.detach(), roughness)
-        embedding = self.field_output_bottleneck(embedding) if use_bottleneck else embedding
+        embedding = self.field_output_bottleneck(embedding)
         mlp_out = self.mlp_mid(torch.cat([encoded_dir, n_dot_d.detach(), embedding], dim=-1))
         outputs = self.field_output_mid(mlp_out)
         return outputs

@@ -48,7 +48,7 @@ reflect_sampling_nerf = MethodSpecification(
                 "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, warmup_steps=1000, max_steps=100000),
             },
             "environment_networks": {
-                "optimizer": AdamOptimizerConfig(lr=1e-4, eps=1e-6),
+                "optimizer": AdamOptimizerConfig(lr=1e-2, eps=1e-6),
                 "scheduler": ExponentialDecaySchedulerConfig(lr_final=1e-4, warmup_steps=1000, max_steps=100000),
             },
             "fields": {
