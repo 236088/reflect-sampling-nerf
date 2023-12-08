@@ -186,8 +186,7 @@ class ReflectSamplingNeRFModel(Model):
         
         diff = self.renderer_rgb(diff_outputs, weights, background_color=background_color)
         
-        rgb = self.renderer_rgb(tint_outputs*low_outputs, weights)
-        rgb = torch.clip(diff + rgb, 0.0, 1.0)
+        rgb = torch.clip(diff + self.renderer_rgb(tint_outputs*low_outputs, weights), 0.0, 1.0)
 
         tint = self.renderer_rgb(tint_outputs, weights)
         low = self.renderer_rgb(low_outputs, weights)
