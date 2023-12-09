@@ -59,19 +59,14 @@ class ReflectSamplingNeRFPropField(Field):
     
           
     def get_density(
-        self, ray_samples: RaySamples, requires_density_grad:bool = False
+        self, ray_samples: RaySamples
     ) -> Tuple[Tensor, Tensor]:
         gaussian_samples = ray_samples.frustums.get_gaussian_blob()
         if self.spatial_distortion is not None:
             gaussian_samples = self.spatial_distortion(gaussian_samples)
-        if requires_density_grad and self.training:
-            gaussian_samples.mean.requires_grad = True
-            self._sample_locations = gaussian_samples.mean
         encoded_xyz = self.position_encoding(gaussian_samples.mean, covs=gaussian_samples.cov)
         mlp_out = self.mlp_base(encoded_xyz)
         density = self.field_output_density(mlp_out)
-        if requires_density_grad and self.training:
-            self._density_before_activation=density
         density = self.softplus(density + self.density_bias)
         return density, mlp_out
        
