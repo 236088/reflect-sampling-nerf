@@ -88,7 +88,7 @@ class ReflectSamplingNeRFModel(Model):
 
         # setting up fields
         position_encoding = NeRFEncoding(
-            num_frequencies=16, min_freq_exp=0.0, max_freq_exp=15.0, include_input=True
+            in_dim=3, num_frequencies=16, min_freq_exp=0.0, max_freq_exp=15.0, include_input=True
         )
         direction_encoding = IntegratedSHEncoding()
         spatial_distortion = SceneContraction()
